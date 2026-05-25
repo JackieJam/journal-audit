@@ -28,7 +28,7 @@ if %errorlevel% neq 0 (
         pause
         exit /b 1
     )
-    :: 刷新 PATH（安装脚本通常已处理，这里再确保一下）
+    :: 刷新 PATH
     call :refresh_env
     where uv >nul 2>&1
     if !errorlevel! neq 0 (
@@ -53,55 +53,56 @@ if !errorlevel! equ 0 (
     exit /b 0
 )
 
-echo 正在同步依赖...
+:: ── 同步依赖（显示进度，不用 --quiet）──
+echo 正在同步依赖（首次运行需下载，可能需要几分钟）...
 
 set SYNC_OK=0
 
-:: 第一次尝试：正常同步
-uv sync --quiet 2>%TEMP%\uv-sync-err.log
+:: 第一次尝试：正常同步，显示进度
+uv sync
 if !errorlevel! equ 0 (
     set SYNC_OK=1
 ) else (
-    :: 检查是否为缓存权限错误
-    findstr /C:"Operation not permitted" /C:"Permission denied" "%TEMP%\uv-sync-err.log" >nul 2>&1
-    if !errorlevel! equ 0 (
-        echo 检测到 uv 缓存权限问题，尝试清除缓存后重试...
-        rd /s /q "%USERPROFILE%\.cache\uv\sdists-v*" 2>nul
-        rd /s /q "%USERPROFILE%\.cache\uv\archive-v*" 2>nul
-        uv sync --quiet 2>%TEMP%\uv-sync-err.log
-        if !errorlevel! equ 0 set SYNC_OK=1
-    )
+    echo.
+    echo 同步失败，尝试清除缓存后重试...
+    rd /s /q "%USERPROFILE%\.cache\uv\sdists-v*" 2>nul
+    rd /s /q "%USERPROFILE%\.cache\uv\archive-v*" 2>nul
+    uv sync
+    if !errorlevel! equ 0 set SYNC_OK=1
 )
 
 :: 如果仍失败，尝试 --no-cache
 if !SYNC_OK! equ 0 (
-    echo 尝试无缓存模式同步...
-    uv sync --no-cache --quiet 2>%TEMP%\uv-sync-err.log
+    echo.
+    echo 尝试无缓存模式同步（将重新下载所有包）...
+    uv sync --no-cache
     if !errorlevel! equ 0 set SYNC_OK=1
 )
 
 if !SYNC_OK! equ 0 (
     echo.
-    echo 依赖同步失败。错误信息：
-    type "%TEMP%\uv-sync-err.log" 2>nul
+    echo ============================================================
+    echo 依赖同步失败。
     echo.
     echo 手动修复建议：
     echo   1. 删除 %%USERPROFILE%%\.cache\uv\ 清除 uv 缓存后重试
     echo   2. 运行 uv sync --no-cache 跳过缓存直接安装
     echo   3. 确认本机 Python 版本 ^>= 3.11
+    echo   4. 检查网络连接是否正常（需要访问 PyPI）
+    echo ============================================================
     echo.
     pause
     exit /b 1
 )
 
+echo.
+echo 依赖就绪。
+echo.
 echo 浏览器访问地址：http://127.0.0.1:%STREAMLIT_PORT%
 echo 按 Ctrl+C 停止服务
 echo.
 
 uv run streamlit run app.py --server.address 127.0.0.1 --server.port %STREAMLIT_PORT%
-
-:: 清理临时文件
-del "%TEMP%\uv-sync-err.log" 2>nul
 
 echo.
 echo 服务已退出。
