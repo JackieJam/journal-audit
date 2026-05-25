@@ -21,9 +21,11 @@ REQUIRED_COLUMNS = [
     "凭证类型",
     "文本",
     "总账科目",
-    "借/贷标识",
     "凭证货币价值",
 ]
+
+# 借贷方向推断：如果缺少 借/贷标识 列，可以靠这两列来识别方向
+DC_AMOUNT_COLUMNS = ["借方金额", "贷方金额"]
 
 COLUMN_ALIASES: dict[str, str] = {
     "过帐日期": "过账日期",
@@ -80,9 +82,93 @@ def _read_single_file(src: str | Path | IO) -> pd.DataFrame:
     if "总账科目" in df.columns:
         df["总账科目"] = df["总账科目"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
 
+    # ── 借/贷标识列处理 ──
+    # 若缺少 借/贷标识 列，尝试从 借方金额 / 贷方金额 列推断方向
+    if "借/贷标识" not in df.columns:
+        df = _synthesize_dc_from_amounts(df)
+        if "借/贷标识" not in df.columns:
+            # 两种列都没有，无法判断借贷方向
+            missing = ["借/贷标识（也尝试了'借方金额'+'贷方金额'列）"]
+            raise ValueError(f"文件缺少必要列：{missing}")
+
+    # 若缺少 凭证货币价值 列，尝试从借方/贷方金额列合成
+    if "凭证货币价值" not in df.columns:
+        df = _synthesize_amount_from_dc(df)
+
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"文件缺少必要列：{missing}")
+
+    return df
+
+
+def _synthesize_dc_from_amounts(df: pd.DataFrame) -> pd.DataFrame:
+    """从 借方金额 / 贷方金额 列推断 借/贷标识。
+
+    规则：
+    - 借方金额有值（非空、非零），贷方金额为空/零 → S（借方）
+    - 贷方金额有值（非空、非零），借方金额为空/零 → H（贷方）
+    - 两者都有值 → 取金额较大的方向
+    - 两者都无 → 标记为空字符串
+    """
+    # 列名标准化：部分 ERP 导出用「借方」「贷方」或「Debit」「Credit」
+    debit_col = _find_column(df, ["借方金额", "借方", "Debit", "借方发生额"])
+    credit_col = _find_column(df, ["贷方金额", "贷方", "Credit", "贷方发生额"])
+
+    if debit_col is None and credit_col is None:
+        return df
+
+    debit_vals = pd.to_numeric(df[debit_col], errors="coerce").fillna(0) if debit_col else pd.Series(0, index=df.index)
+    credit_vals = pd.to_numeric(df[credit_col], errors="coerce").fillna(0) if credit_col else pd.Series(0, index=df.index)
+
+    # 向量化推断借贷方向
+    dc = pd.Series("", index=df.index, dtype=str)
+
+    mask_debit_only = (debit_vals > 0) & (credit_vals == 0)
+    mask_credit_only = (credit_vals > 0) & (debit_vals == 0)
+    mask_both = (debit_vals > 0) & (credit_vals > 0)
+
+    dc[mask_debit_only] = "S"
+    dc[mask_credit_only] = "H"
+    dc[mask_both] = pd.Series(
+        ["S" if d >= c else "H" for d, c in zip(debit_vals[mask_both], credit_vals[mask_both])],
+        index=dc[mask_both].index,
+    )
+
+    df["借/贷标识"] = dc
+    return df
+
+
+def _find_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    """在 DataFrame 中查找第一个匹配的列名。"""
+    for col in candidates:
+        if col in df.columns:
+            return col
+    return None
+
+
+def _synthesize_amount_from_dc(df: pd.DataFrame) -> pd.DataFrame:
+    """从 借方金额 / 贷方金额 列合成 凭证货币价值。
+
+    如果有 借/贷标识 列且为 S，取借方金额；否则取贷方金额。
+    金额统一取正值（与 SAP 导出一致），方向由 借/贷标识 控制。
+    """
+    debit_col = _find_column(df, ["借方金额", "借方", "Debit", "借方发生额"])
+    credit_col = _find_column(df, ["贷方金额", "贷方", "Credit", "贷方发生额"])
+
+    if debit_col is None and credit_col is None:
+        return df
+
+    debit_vals = pd.to_numeric(df[debit_col], errors="coerce").fillna(0) if debit_col else pd.Series(0, index=df.index)
+    credit_vals = pd.to_numeric(df[credit_col], errors="coerce").fillna(0) if credit_col else pd.Series(0, index=df.index)
+
+    dc = df["借/贷标识"].astype(str).str.strip()
+    df["凭证货币价值"] = 0.0
+    df.loc[dc == "S", "凭证货币价值"] = debit_vals[dc == "S"]
+    df.loc[dc == "H", "凭证货币价值"] = credit_vals[dc == "H"]
+    # 两者都有值的方向，取较大者
+    mask_both = (dc != "S") & (dc != "H")
+    df.loc[mask_both, "凭证货币价值"] = debit_vals[mask_both].combine(credit_vals[mask_both], max)
 
     return df
 
