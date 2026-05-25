@@ -62,15 +62,35 @@ if ! command -v uv >/dev/null 2>&1; then
   echo
 fi
 
+# ── 自动寻找可用端口（从 8505 开始，最多尝试到 8520）──
 PORT="${STREAMLIT_PORT:-8505}"
+ORIGINAL_PORT="$PORT"
 
-# 检查端口是否被占用
-if lsof -Pi ":$PORT" -sTCP:LISTEN -t >/dev/null 2>&1; then
-  echo "端口 $PORT 已被占用，可能服务已在运行。"
-  echo "访问地址：http://127.0.0.1:${PORT}"
+find_free_port() {
+  local p=$1
+  local max=8520
+  while [ "$p" -le "$max" ]; do
+    if ! lsof -Pi ":$p" -sTCP:LISTEN -t >/dev/null 2>&1; then
+      echo "$p"
+      return 0
+    fi
+    p=$((p + 1))
+  done
+  return 1
+}
+
+FREE_PORT=$(find_free_port "$PORT")
+if [ -z "$FREE_PORT" ]; then
+  echo "端口 $ORIGINAL_PORT ~ 8520 全部被占用，请释放端口后重试。"
   read -r -p "按回车关闭窗口..."
-  exit 0
+  exit 1
 fi
+
+if [ "$FREE_PORT" -ne "$ORIGINAL_PORT" ]; then
+  echo "端口 $ORIGINAL_PORT 已被占用，自动切换到 $FREE_PORT"
+  echo
+fi
+PORT="$FREE_PORT"
 
 # 同步依赖（显示进度，不用 --quiet）
 echo "正在同步依赖（首次运行需下载，可能需要几分钟）..."
@@ -78,14 +98,14 @@ echo "正在同步依赖（首次运行需下载，可能需要几分钟）..."
 sync_ok=false
 
 # 第一次尝试：正常同步，显示进度
-if uv sync; then
+if uv sync --link-mode=copy; then
   sync_ok=true
 else
   echo
   echo "同步失败，尝试清除缓存后重试..."
   rm -rf ~/.cache/uv/sdists-v* 2>/dev/null || true
   rm -rf ~/.cache/uv/archive-v* 2>/dev/null || true
-  if uv sync; then
+  if uv sync --link-mode=copy; then
     sync_ok=true
   fi
 fi
@@ -94,7 +114,7 @@ fi
 if ! $sync_ok; then
   echo
   echo "尝试无缓存模式同步（将重新下载所有包）..."
-  if uv sync --no-cache; then
+  if uv sync --link-mode=copy --no-cache; then
     sync_ok=true
   fi
 fi

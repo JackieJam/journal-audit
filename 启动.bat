@@ -40,18 +40,29 @@ if %errorlevel% neq 0 (
     echo.
 )
 
-:: 默认端口
-if "%STREAMLIT_PORT%"=="" set STREAMLIT_PORT=8505
+:: ── 自动寻找可用端口（从 8505 开始，最多尝试到 8520）──
+set PORT=8505
+if not "%STREAMLIT_PORT%"=="" set PORT=%STREAMLIT_PORT%
+set _ORIGINAL_PORT=%PORT%
 
-:: 检查端口是否被占用
-netstat -ano 2>nul | findstr ":%STREAMLIT_PORT% " >nul
-if !errorlevel! equ 0 (
-    echo 端口 %STREAMLIT_PORT% 已被占用，可能服务已在运行。
-    echo 访问地址：http://127.0.0.1:%STREAMLIT_PORT%
+:find_port
+netstat -ano 2>nul | findstr ":%PORT% " >nul
+if !errorlevel! neq 0 goto port_found
+if !PORT! geq 8520 goto no_port
+set /a PORT+=1
+goto find_port
+
+:no_port
+echo 端口 %_ORIGINAL_PORT% ~ 8520 全部被占用，请释放端口后重试。
+pause
+exit /b 1
+
+:port_found
+if not "%_ORIGINAL_PORT%"=="%PORT%" (
+    echo 端口 %_ORIGINAL_PORT% 已被占用，自动切换到 %PORT%
     echo.
-    pause
-    exit /b 0
 )
+set STREAMLIT_PORT=%PORT%
 
 :: ── 同步依赖（显示进度，不用 --quiet）──
 echo 正在同步依赖（首次运行需下载，可能需要几分钟）...
@@ -98,11 +109,11 @@ if !SYNC_OK! equ 0 (
 echo.
 echo 依赖就绪。
 echo.
-echo 浏览器访问地址：http://127.0.0.1:%STREAMLIT_PORT%
+echo 浏览器访问地址：http://127.0.0.1:!PORT!
 echo 按 Ctrl+C 停止服务
 echo.
 
-uv run streamlit run app.py --server.address 127.0.0.1 --server.port %STREAMLIT_PORT%
+uv run streamlit run app.py --server.address 127.0.0.1 --server.port !PORT!
 
 echo.
 echo 服务已退出。
