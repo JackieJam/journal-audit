@@ -83,13 +83,14 @@ def _read_single_file(src: str | Path | IO) -> pd.DataFrame:
         df["总账科目"] = df["总账科目"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
 
     # ── 借/贷标识列处理 ──
-    # 若缺少 借/贷标识 列，尝试从 借方金额 / 贷方金额 列推断方向
+    # 三级降级：借方/贷方金额列 → 凭证货币价值正负号 → 报错
     if "借/贷标识" not in df.columns:
         df = _synthesize_dc_from_amounts(df)
-        if "借/贷标识" not in df.columns:
-            # 两种列都没有，无法判断借贷方向
-            missing = ["借/贷标识（也尝试了'借方金额'+'贷方金额'列）"]
-            raise ValueError(f"文件缺少必要列：{missing}")
+    if "借/贷标识" not in df.columns:
+        df = _synthesize_dc_from_sign(df)
+    if "借/贷标识" not in df.columns:
+        missing = ["借/贷标识（也尝试了'借方金额'+'贷方金额'列，以及凭证货币价值正负号）"]
+        raise ValueError(f"文件缺少必要列：{missing}")
 
     # 若缺少 凭证货币价值 列，尝试从借方/贷方金额列合成
     if "凭证货币价值" not in df.columns:
@@ -103,13 +104,13 @@ def _read_single_file(src: str | Path | IO) -> pd.DataFrame:
 
 
 def _synthesize_dc_from_amounts(df: pd.DataFrame) -> pd.DataFrame:
-    """从 借方金额 / 贷方金额 列推断 借/贷标识。
+    """从 借方金额 / 贷方金额 列推断 借/贷标识（优先级 1）。
 
     规则：
     - 借方金额有值（非空、非零），贷方金额为空/零 → S（借方）
     - 贷方金额有值（非空、非零），借方金额为空/零 → H（贷方）
     - 两者都有值 → 取金额较大的方向
-    - 两者都无 → 标记为空字符串
+    - 两列都不存在 → 返回原 DataFrame，交给下一级（正负号推断）
     """
     # 列名标准化：部分 ERP 导出用「借方」「贷方」或「Debit」「Credit」
     debit_col = _find_column(df, ["借方金额", "借方", "Debit", "借方发生额"])
@@ -135,6 +136,25 @@ def _synthesize_dc_from_amounts(df: pd.DataFrame) -> pd.DataFrame:
         index=dc[mask_both].index,
     )
 
+    df["借/贷标识"] = dc
+    return df
+
+
+def _synthesize_dc_from_sign(df: pd.DataFrame) -> pd.DataFrame:
+    """从 凭证货币价值 的正负号推断 借/贷标识。
+
+    部分 ERP 导出的序时账用正负号表示借贷方向：
+    - 正数 → S（借方）
+    - 负数 → H（贷方）
+    - 零 → 空字符串（无法判断）
+    """
+    if "凭证货币价值" not in df.columns:
+        return df
+
+    amount = pd.to_numeric(df["凭证货币价值"], errors="coerce").fillna(0)
+    dc = pd.Series("", index=df.index, dtype=str)
+    dc[amount > 0] = "S"
+    dc[amount < 0] = "H"
     df["借/贷标识"] = dc
     return df
 
