@@ -8,12 +8,58 @@ echo "启动序时账审计分析平台..."
 echo "项目目录：$ROOT"
 echo
 
-# 检查 uv 是否可用
+# ── 检查 uv 是否可用，若未安装则尝试自动安装 ──
 if ! command -v uv >/dev/null 2>&1; then
-  echo "未检测到 uv，请先安装后再启动。"
+  echo "未检测到 uv 包管理器。"
+  echo
+  echo "uv 是 Python 包管理器，用于安装本项目的依赖。"
   echo "安装说明：https://docs.astral.sh/uv/getting-started/installation/"
-  read -r -p "按回车关闭窗口..."
-  exit 1
+  echo
+  read -r -p "是否自动安装 uv？[Y/n] " answer
+  answer="${answer:-Y}"
+  if [[ ! "$answer" =~ ^[Yy] ]]; then
+    echo "已取消。请手动安装 uv 后重新启动本脚本。"
+    read -r -p "按回车关闭窗口..."
+    exit 1
+  fi
+
+  echo "正在安装 uv..."
+  install_ok=false
+
+  # 优先尝试 Homebrew（macOS 最常见）
+  if command -v brew >/dev/null 2>&1; then
+    echo "检测到 Homebrew，使用 brew install uv..."
+    if brew install uv 2>/dev/null; then
+      install_ok=true
+    else
+      echo "Homebrew 安装失败，尝试官方安装脚本..."
+    fi
+  fi
+
+  # 官方安装脚本
+  if ! $install_ok; then
+    if curl -LsSf https://astral.sh/uv/install.sh 2>/dev/null | sh; then
+      install_ok=true
+    fi
+  fi
+
+  if ! $install_ok; then
+    echo "uv 安装失败，请手动安装。"
+    echo "安装说明：https://docs.astral.sh/uv/getting-started/installation/"
+    read -r -p "按回车关闭窗口..."
+    exit 1
+  fi
+
+  # 刷新 shell 环境（安装脚本通常会修改 ~/.bashrc / ~/.zshrc，当前 shell 可能还没加载）
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "uv 已安装但未在当前终端生效。请关闭此窗口，重新打开终端后再试。"
+    read -r -p "按回车关闭窗口..."
+    exit 1
+  fi
+
+  echo "uv 安装成功。"
+  echo
 fi
 
 PORT="${STREAMLIT_PORT:-8505}"

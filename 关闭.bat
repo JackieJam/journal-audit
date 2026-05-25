@@ -8,8 +8,9 @@ echo.
 if "%STREAMLIT_PORT%"=="" set STREAMLIT_PORT=8505
 
 :: 查找监听端口的进程 PID
+set PID=
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":%STREAMLIT_PORT% " 2^>nul') do (
-    set PID=%%a
+    if "!PID!"=="" set PID=%%a
 )
 
 if "%PID%"=="" (
@@ -33,3 +34,4 @@ if !errorlevel! equ 0 (
 
 echo.
 pause
+exit /b 0

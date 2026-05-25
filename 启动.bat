@@ -6,14 +6,38 @@ echo 启动序时账审计分析平台...
 echo 项目目录：%~dp0
 echo.
 
-:: 检查 uv 是否可用
+:: ── 检查 uv 是否可用，若未安装则提示自动安装 ──
 where uv >nul 2>&1
 if %errorlevel% neq 0 (
-    echo 未检测到 uv，请先安装后再启动。
+    echo 未检测到 uv 包管理器。
+    echo.
+    echo uv 是 Python 包管理器，用于安装本项目的依赖。
     echo 安装说明：https://docs.astral.sh/uv/getting-started/installation/
     echo.
-    pause
-    exit /b 1
+    choice /C YN /M "是否自动安装 uv（需要管理员权限）"
+    if !errorlevel! equ 2 (
+        echo 已取消安装。请手动安装 uv 后重新启动本脚本。
+        pause
+        exit /b 1
+    )
+    echo 正在安装 uv...
+    powershell -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
+    if !errorlevel! neq 0 (
+        echo uv 安装失败，请手动安装。
+        echo 安装说明：https://docs.astral.sh/uv/getting-started/installation/
+        pause
+        exit /b 1
+    )
+    :: 刷新 PATH（安装脚本通常已处理，这里再确保一下）
+    call :refresh_env
+    where uv >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo uv 已安装但未加入 PATH。请重新打开命令窗口后重试。
+        pause
+        exit /b 1
+    )
+    echo uv 安装成功。
+    echo.
 )
 
 :: 默认端口
@@ -82,3 +106,11 @@ del "%TEMP%\uv-sync-err.log" 2>nul
 echo.
 echo 服务已退出。
 pause
+exit /b 0
+
+:: ── 刷新环境变量 ──
+:refresh_env
+for /f "tokens=2*" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v PATH 2^>nul') do set "SysPath=%%b"
+for /f "tokens=2*" %%a in ('reg query "HKCU\Environment" /v PATH 2^>nul') do set "UserPath=%%b"
+set "PATH=%SysPath%;%UserPath%;%PATH%"
+goto :eof
