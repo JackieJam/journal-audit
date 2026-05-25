@@ -113,7 +113,7 @@ echo 浏览器访问地址：http://127.0.0.1:!PORT!
 echo 按 Ctrl+C 停止服务
 echo.
 
-uv run streamlit run app.py --server.address 127.0.0.1 --server.port !PORT!
+uv run streamlit run app.py --server.address 127.0.0.1 --server.port !PORT! --server.headless true
 
 echo.
 echo 服务已退出。

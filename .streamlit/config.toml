@@ -1,4 +1,5 @@
 [server]
+headless = true
 maxUploadSize = 2000
 maxMessageSize = 2000
 
