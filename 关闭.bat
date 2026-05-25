@@ -29,8 +29,7 @@ timeout /t 2 /nobreak >nul
 :: 二次确认
 set REMAIN=0
 for /l %%P in (8505,1,8520) do (
-    netstat -ano 2>nul | findstr ":%%P " >nul
-    if !errorlevel! equ 0 set REMAIN=1
+    netstat -ano 2>nul | findstr ":%%P " >nul && set REMAIN=1
 )
 
 if !REMAIN! equ 0 (
