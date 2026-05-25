@@ -122,6 +122,33 @@ Period 13 = 年末关闭调整期，归入当年并单独标记
 
 ---
 
+## 常见问题
+
+### `uv sync` 报错 "Operation not permitted" 或 "Permission denied"
+
+uv 缓存目录权限异常所致。按顺序尝试：
+
+```bash
+# 方案一：清除 uv 缓存后重试
+rm -rf ~/.cache/uv/
+uv sync
+
+# 方案二：跳过缓存直接安装
+uv sync --no-cache
+```
+
+> 双击 `启动.command` 已内置以上降级逻辑，会自动处理此类错误。
+
+### 端口被占用
+
+默认端口 8505。如需更换：
+
+```bash
+STREAMLIT_PORT=8506 uv run streamlit run app.py
+```
+
+---
+
 ## 许可
 
 [MIT](LICENSE)
