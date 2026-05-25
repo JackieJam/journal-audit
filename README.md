@@ -47,6 +47,12 @@ uv run streamlit run app.py
 
 双击 `启动.command` 即可自动同步依赖并启动服务，双击 `关闭.command` 停止。
 
+### Windows 快捷启动
+
+双击 `启动.bat` 即可自动同步依赖并启动服务，双击 `关闭.bat` 停止。
+
+> Windows 上 API Key 存储使用本地文件（`~/.audit_tool/secrets.json`），macOS 优先使用钥匙串。
+
 ---
 
 ## 审计规则列表
