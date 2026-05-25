@@ -358,9 +358,11 @@ def _keychain_account() -> str:
 
 
 def _resolve_api_key() -> tuple[str, str]:
-    env_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-    if env_key:
-        return env_key, "环境变量 DEEPSEEK_API_KEY"
+    # 按优先级检查多个通用环境变量名
+    for var_name in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "LLM_API_KEY"):
+        env_key = os.environ.get(var_name, "").strip()
+        if env_key:
+            return env_key, f"环境变量 {var_name}"
     manual_key = st.session_state.get("_manual_api_key", "").strip()
     if manual_key:
         return manual_key, "本次会话输入"

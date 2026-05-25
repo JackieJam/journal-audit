@@ -34,8 +34,8 @@
 # 安装依赖
 uv sync
 
-# 配置 LLM API Key（二选一）
-export DEEPSEEK_API_KEY="sk-your-key"
+# 配置 LLM API Key（任选一种环境变量）
+export DEEPSEEK_API_KEY="sk-your-key"  # 或 OPENAI_API_KEY / LLM_API_KEY
 
 # 启动
 uv run streamlit run app.py
@@ -99,9 +99,9 @@ config/
 
 ### LLM 配置
 
-- 默认模型：`deepseek-chat`（兼容 OpenAI SDK）
-- 可在侧边栏切换模型和 Base URL
-- API Key 优先级：环境变量 `DEEPSEEK_API_KEY` > 会话输入 > 本机钥匙串（macOS）
+- 默认模型：`deepseek-chat`，支持任意 OpenAI 兼容 API
+- 可在侧边栏切换模型和 Base URL（如 `https://api.openai.com/v1`）
+- API Key 优先级：环境变量 `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` / `LLM_API_KEY` > 会话输入 > 本机钥匙串（macOS）
 
 ### 数据格式
 

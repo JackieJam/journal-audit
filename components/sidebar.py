@@ -230,7 +230,7 @@ def render_sidebar(
                 "钥匙串别名",
                 value=cfg.get("keychain_account", "default"),
                 key="llm_keychain_account_input",
-                help="同一台 Mac 上可用不同别名保存不同 API Key，例如 deepseek-prod。",
+                help="同一台 Mac 上可用不同别名保存不同 API Key，例如 openai-prod。",
             )
 
             _save_llm_config({
@@ -261,7 +261,7 @@ def render_sidebar(
                 type="password",
                 placeholder="sk-...",
                 key="_manual_api_key",
-                help="只保存在当前 Streamlit 会话内。若要刷新后继续使用，请保存到本机钥匙串或设置环境变量。",
+                help="只保存在当前 Streamlit 会话内。也可设置环境变量 DEEPSEEK_API_KEY / OPENAI_API_KEY / LLM_API_KEY。",
             )
             if manual_key and st.button("保存 API Key 到本机钥匙串", use_container_width=True):
                 account = _keychain_account()
@@ -276,7 +276,7 @@ def render_sidebar(
             if api_key:
                 st.success(f"API Key 来源：{key_source}")
             else:
-                st.warning("尚未配置 API Key。可设置 DEEPSEEK_API_KEY，或输入后保存到本机钥匙串。")
+                st.warning("尚未配置 API Key。可设置环境变量 DEEPSEEK_API_KEY / OPENAI_API_KEY / LLM_API_KEY，或在下方输入。")
             st.caption(f"当前方案：{_llm_model()} | {_llm_base_url()}")
             quota = quota_status()
             if quota.get("limit", 0):
