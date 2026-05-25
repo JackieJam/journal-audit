@@ -1,0 +1,45 @@
+# === Python 虚拟环境 ===
+.venv/
+venv/
+env/
+*.egg-info/
+
+# === Python 缓存 ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# === 工具本地状态（不要提交） ===
+.deepseek/
+.qoder/
+.docker/
+
+# === macOS 系统文件 ===
+.DS_Store
+._*
+
+# === IDE / 编辑器 ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# === 序时账数据文件（客户敏感数据） ===
+*.xlsx
+*.xls
+*.csv
+*.parquet
+
+# === Streamlit ===
+.streamlit/secrets.toml
+
+# === 环境变量文件 ===
+.env
+.env.local
+.env.*.local
+
+# === 操作系统 ===
+Thumbs.db
+Desktop.ini

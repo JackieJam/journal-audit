@@ -1,0 +1,14 @@
+[project]
+name = "journal-audit"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "streamlit>=1.35",
+    "pandas>=2.2",
+    "openpyxl>=3.1",
+    "plotly>=5.20",
+    "openai>=1.30",
+    "socksio>=1.0",
+    "chinese-calendar>=1.9",
+    "xlsxwriter>=3.2",
+]
