@@ -59,7 +59,7 @@ echo 正在同步依赖（首次运行需下载，可能需要几分钟）...
 set SYNC_OK=0
 
 :: 第一次尝试：正常同步，显示进度
-uv sync
+uv sync --link-mode=copy
 if !errorlevel! equ 0 (
     set SYNC_OK=1
 ) else (
@@ -67,7 +67,7 @@ if !errorlevel! equ 0 (
     echo 同步失败，尝试清除缓存后重试...
     rd /s /q "%USERPROFILE%\.cache\uv\sdists-v*" 2>nul
     rd /s /q "%USERPROFILE%\.cache\uv\archive-v*" 2>nul
-    uv sync
+    uv sync --link-mode=copy
     if !errorlevel! equ 0 set SYNC_OK=1
 )
 
@@ -75,7 +75,7 @@ if !errorlevel! equ 0 (
 if !SYNC_OK! equ 0 (
     echo.
     echo 尝试无缓存模式同步（将重新下载所有包）...
-    uv sync --no-cache
+    uv sync --link-mode=copy --no-cache
     if !errorlevel! equ 0 set SYNC_OK=1
 )
 
