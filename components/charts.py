@@ -382,21 +382,32 @@ def financial_overview_chart(financials: dict[int, dict]) -> go.Figure:
 
     fig = make_subplots(
         rows=2, cols=2,
-        subplot_titles=("收入 / 成本 / 毛利", "毛利率趋势", "费用结构", "收入构成"),
+        subplot_titles=("收入 / 成本 / 毛利 / 费用", "毛利率趋势", "费用结构", "收入构成"),
         specs=[[{"type": "bar"}, {"type": "scatter"}],
                [{"type": "pie"}, {"type": "bar"}]],
         vertical_spacing=0.22,
         horizontal_spacing=0.10,
     )
 
-    # 左上：收入/成本/毛利柱状图
+    # 左上：收入/成本/毛利/费用柱状图
     rev_vals = [financials[y]["revenue"]["total"] / 1e4 for y in years]
     cost_vals = [financials[y]["cost"]["total"] / 1e4 for y in years]
     gp_vals = [financials[y]["gross_profit"] / 1e4 for y in years]
+    exp_vals = []
+    for y in years:
+        f = financials[y]
+        total = (
+            sum(f.get("expenses", {}).values())
+            + f.get("rd_expense", 0)
+            + f.get("financial_expense", 0)
+            + f.get("tax_surcharge", 0)
+        )
+        exp_vals.append(total / 1e4)
     year_labels = [f"{y}年" for y in years]
     fig.add_trace(go.Bar(name="收入", x=year_labels, y=rev_vals, marker_color="#2F5496"), row=1, col=1)
     fig.add_trace(go.Bar(name="成本", x=year_labels, y=cost_vals, marker_color="#ED7D31"), row=1, col=1)
     fig.add_trace(go.Bar(name="毛利", x=year_labels, y=gp_vals, marker_color="#70AD47"), row=1, col=1)
+    fig.add_trace(go.Bar(name="费用", x=year_labels, y=exp_vals, marker_color="#F59E0B"), row=1, col=1)
     fig.update_yaxes(title_text="金额（万元）", row=1, col=1)
 
     # 右上：毛利率折线
@@ -457,20 +468,25 @@ def multi_year_financial_overview(financials: dict[int, dict]) -> go.Figure:
     gp_vals = [financials[y]["gross_profit"] / 1e4 for y in years]
     gm_vals = [financials[y]["gross_margin"] * 100 for y in years]
 
-    # 净利润 = 毛利 - 费用 - 财务费用 - 税金 + 投资收益 + 营业外收支
+    # 费用合计 = 销售/管理/制造费用 + 研发 + 财务费用 + 税金及附加
+    expense_total_vals = []
+    for y in years:
+        f = financials[y]
+        exp_total = sum(f.get("expenses", {}).values())
+        total = exp_total + f.get("rd_expense", 0) + f.get("financial_expense", 0) + f.get("tax_surcharge", 0)
+        expense_total_vals.append(total / 1e4)
+
+    # 净利润 = 毛利 - 费用合计 + 投资收益 + 营业外收支
     net_vals = []
     net_margin_vals = []
-    for y in years:
+    for y, exp_for_net in zip(years, expense_total_vals):
         f = financials[y]
         rev = f["revenue"]["total"]
         gp = f["gross_profit"]
-        exp_total = sum(f.get("expenses", {}).values())
-        fin_exp = f.get("financial_expense", 0)
-        tax = f.get("tax_surcharge", 0)
         inv_inc = f.get("investment_income", 0)
         non_op_inc = f.get("non_operating_income", 0)
         non_op_exp = f.get("non_operating_expense", 0)
-        net = gp - exp_total - fin_exp - tax + inv_inc + non_op_inc - non_op_exp
+        net = gp - exp_for_net * 1e4 + inv_inc + non_op_inc - non_op_exp
         net_vals.append(net / 1e4)
         net_margin_vals.append((net / rev * 100) if rev > 0 else 0)
 
@@ -484,10 +500,11 @@ def multi_year_financial_overview(financials: dict[int, dict]) -> go.Figure:
         specs=[[{"type": "bar"}, {"type": "scatter"}]],
     )
 
-    # 左：柱状图
+    # 左：柱状图（含费用，让"利润被费用侵蚀"的形态可见）
     fig.add_trace(go.Bar(name="收入", x=year_labels, y=rev_vals, marker_color="#2F5496"), row=1, col=1)
     fig.add_trace(go.Bar(name="成本", x=year_labels, y=cost_vals, marker_color="#ED7D31"), row=1, col=1)
     fig.add_trace(go.Bar(name="毛利", x=year_labels, y=gp_vals, marker_color="#70AD47"), row=1, col=1)
+    fig.add_trace(go.Bar(name="费用", x=year_labels, y=expense_total_vals, marker_color="#F59E0B"), row=1, col=1)
     fig.add_trace(go.Bar(name="净利", x=year_labels, y=net_vals, marker_color="#7c3aed"), row=1, col=1)
     fig.update_yaxes(title_text="金额（万元）", row=1, col=1)
 

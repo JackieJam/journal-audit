@@ -221,15 +221,29 @@ def get_pool_statistics(pool: list[dict[str, Any]] | None) -> dict[str, Any]:
 
 
 # ── 科目分类 ──
+# 把基础类别和审计语义对齐：
+# - "收入/成本/费用/往来/税金"直接复用 account_classifier 的自动分类结果；
+# - "营业外/资产相关"是审计抽样权重需要保留的兜底分类，按编号前缀走。
 
 ACCOUNT_CATEGORY_RULES: dict[str, tuple[tuple[str, ...], str]] = {
-    "收入": (("6001", "6051"), "主营业务收入+其他业务收入"),
-    "成本": (("6401", "6402"), "主营业务成本+其他业务成本"),
-    "费用": (("6601", "6602", "6603", "6604", "6910", "6920"), "销售/管理/财务/研发/制造费用"),
-    "往来": (("1122", "1221", "2202", "2241"), "应收/其他应收/应付/其他应付"),
-    "税金": (("6403",), "税金及附加"),
     "营业外": (("6301", "6711", "6111"), "营业外收支+投资收益"),
     "资产相关": (("1403", "1405", "1602", "5001", "8142", "8143"), "存货/折旧/生产/制造分摊"),
+}
+
+
+# 把 account_classifier 类别名映射到候选池权重表里的简化标签。
+_CLASSIFIER_TO_WEIGHT: dict[str, str] = {
+    "收入": "收入",
+    "成本": "成本",
+    "费用": "费用",
+    "研发费用": "费用",
+    "财务费用": "费用",
+    "税金及附加": "税金",
+    "应收": "往来",
+    "其他应收": "往来",
+    "应付": "往来",
+    "应付暂估": "往来",
+    "其他应付": "往来",
 }
 
 DEFAULT_ACCOUNT_WEIGHTS: dict[str, float] = {
@@ -241,8 +255,23 @@ DEFAULT_ACCOUNT_WEIGHTS: dict[str, float] = {
 }
 
 
-def _classify_account(acct_code: str) -> str:
-    """根据总账科目编码前缀归类。"""
+def _classify_account(acct_code: str, acct_name: str = "") -> str:
+    """根据科目名称（优先）+ 编号前缀（兜底）归类。
+
+    名称命中 account_classifier 自动分类的 11 大类时，按 _CLASSIFIER_TO_WEIGHT
+    映射到候选池权重表的简化标签；
+    名称没命中（或为空）时，才回退到 ACCOUNT_CATEGORY_RULES 中的"营业外"/"资产相关"
+    这两类（这两类基本只能通过编号识别）。
+    """
+    from modules.account_classifier import auto_classify, CAT_UNCATEGORIZED
+
+    name_cat = auto_classify(acct_name) if acct_name else CAT_UNCATEGORIZED
+    if name_cat != CAT_UNCATEGORIZED:
+        mapped = _CLASSIFIER_TO_WEIGHT.get(name_cat)
+        if mapped:
+            return mapped
+
+    # 兜底：营业外 / 资产相关 按编号前缀识别
     acct = str(acct_code).strip()
     for cat, (prefixes, _) in ACCOUNT_CATEGORY_RULES.items():
         if any(acct.startswith(p) for p in prefixes):
@@ -358,16 +387,32 @@ def sample_from_pool(
         # 按科目分类凭证
         voucher_acct_map: dict[str, str] = {}
         if "总账科目" in df.columns and "凭证编号" in df.columns:
+            name_col = next(
+                (c for c in ("总账科目:长文本", "总账科目:短文本", "总账科目：长文本", "总账科目：短文本")
+                 if c in df.columns),
+                None,
+            )
+            cols = ["凭证编号", "总账科目"] + ([name_col] if name_col else [])
             voucher_meta = (
-                df[["凭证编号", "总账科目"]]
+                df[cols]
                 .drop_duplicates(subset="凭证编号")
                 .assign(_vid=lambda d: d["凭证编号"].astype(str))
             )
-            voucher_acct_map = {
-                vid: _classify_account(str(acct))
-                for vid, acct in zip(voucher_meta["_vid"], voucher_meta["总账科目"], strict=False)
-                if vid in candidate_voucher_ids
-            }
+            if name_col:
+                voucher_acct_map = {
+                    vid: _classify_account(str(acct), str(name) if pd.notna(name) else "")
+                    for vid, acct, name in zip(
+                        voucher_meta["_vid"], voucher_meta["总账科目"], voucher_meta[name_col],
+                        strict=False,
+                    )
+                    if vid in candidate_voucher_ids
+                }
+            else:
+                voucher_acct_map = {
+                    vid: _classify_account(str(acct))
+                    for vid, acct in zip(voucher_meta["_vid"], voucher_meta["总账科目"], strict=False)
+                    if vid in candidate_voucher_ids
+                }
 
         # 按科目分组
         by_cat: dict[str, list[str]] = {}
@@ -459,16 +504,32 @@ def sample_from_pool(
                 }
             elif strata_attr == "科目大类":
                 if "总账科目" in df.columns and "凭证编号" in df.columns:
+                    name_col = next(
+                        (c for c in ("总账科目:长文本", "总账科目:短文本", "总账科目：长文本", "总账科目：短文本")
+                         if c in df.columns),
+                        None,
+                    )
+                    cols = ["凭证编号", "总账科目"] + ([name_col] if name_col else [])
                     acct_meta = (
-                        df[["凭证编号", "总账科目"]]
+                        df[cols]
                         .drop_duplicates(subset="凭证编号")
                         .assign(_vid=lambda d: d["凭证编号"].astype(str))
                     )
-                    vid_attr = {
-                        vid: _classify_account(str(acct))
-                        for vid, acct in zip(acct_meta["_vid"], acct_meta["总账科目"], strict=False)
-                        if vid in candidate_voucher_ids
-                    }
+                    if name_col:
+                        vid_attr = {
+                            vid: _classify_account(str(acct), str(name) if pd.notna(name) else "")
+                            for vid, acct, name in zip(
+                                acct_meta["_vid"], acct_meta["总账科目"], acct_meta[name_col],
+                                strict=False,
+                            )
+                            if vid in candidate_voucher_ids
+                        }
+                    else:
+                        vid_attr = {
+                            vid: _classify_account(str(acct))
+                            for vid, acct in zip(acct_meta["_vid"], acct_meta["总账科目"], strict=False)
+                            if vid in candidate_voucher_ids
+                        }
             elif strata_attr == "月份":
                 if "过账日期" in df.columns and "凭证编号" in df.columns:
                     month_meta = (

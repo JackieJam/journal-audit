@@ -11,6 +11,39 @@ from typing import Any
 import pandas as pd
 
 from config.accounts import AUTO_VOUCHER_TYPES
+from modules.account_classifier import (
+    CAT_AP,
+    CAT_AP_ACCRUAL,
+    CAT_AR,
+    CAT_COST,
+    CAT_EXPENSE,
+    CAT_FINANCIAL_EXPENSE,
+    CAT_OTHER_PAYABLE,
+    CAT_OTHER_RECEIVABLE,
+    CAT_RD_EXPENSE,
+    CAT_REVENUE,
+    CAT_TAX_SURCHARGE,
+    classify_dataframe,
+)
+
+
+def _category_overrides() -> dict[str, str]:
+    try:
+        import streamlit as st  # type: ignore
+
+        raw = st.session_state.get("account_category_overrides")
+    except Exception:
+        return {}
+    if isinstance(raw, dict):
+        return {str(k).strip(): str(v).strip() for k, v in raw.items() if str(k).strip()}
+    return {}
+
+
+def _ensure_category(df: pd.DataFrame) -> pd.DataFrame:
+    """给 raw 年度 DataFrame 加 _acct_category（若已存在则跳过）。"""
+    if "_acct_category" in df.columns:
+        return df
+    return classify_dataframe(df, overrides=_category_overrides())
 
 
 @dataclass
@@ -116,12 +149,12 @@ def _accrual_reversal_pairs(year_map: dict[int, pd.DataFrame]) -> list[CrossYear
 
 def _revenue_timing_drift(year_map: dict[int, pd.DataFrame]) -> list[CrossYearFinding]:
     findings = []
-    income_prefixes = ["6001", "6051"]
     years = sorted(year_map.keys())
 
     year_dec_ratio: dict[int, float] = {}
     for yr, df in year_map.items():
-        rev = df[df["总账科目"].astype(str).str[:4].isin(income_prefixes)]
+        df = _ensure_category(df)
+        rev = df[df["_acct_category"].eq(CAT_REVENUE)]
         if rev.empty:
             continue
         rev = rev.copy()
@@ -140,10 +173,10 @@ def _revenue_timing_drift(year_map: dict[int, pd.DataFrame]) -> list[CrossYearFi
 
         # 某年12月收入异常高，且次年1月出现大额红字
         if ratio_n > 1.8:
-            df_n1 = year_map[yr_n1]
+            df_n1 = _ensure_category(year_map[yr_n1])
             jan_red = df_n1[
                 (df_n1["过账日期"].dt.month == 1)
-                & df_n1["总账科目"].astype(str).str[:4].isin(income_prefixes)
+                & df_n1["_acct_category"].eq(CAT_REVENUE)
                 & (df_n1["凭证货币价值"] < 0)
             ]
             if not jan_red.empty:
@@ -167,19 +200,20 @@ def _revenue_timing_drift(year_map: dict[int, pd.DataFrame]) -> list[CrossYearFi
 
 def _yearend_balance_buildup(year_map: dict[int, pd.DataFrame]) -> list[CrossYearFinding]:
     findings = []
-    watch_prefixes = {
-        "应收账款": "1122",
-        "预付款项": "1221",
-        "其他应收款": "1123",
+    # 跟踪应收类科目的期末余额异常堆积。命中分类 = 自动从科目名称识别。
+    watch_categories = {
+        "应收账款": CAT_AR,
+        "其他应收": CAT_OTHER_RECEIVABLE,
     }
     years = sorted(year_map.keys())
 
-    for acct_name, prefix in watch_prefixes.items():
+    for acct_name, category in watch_categories.items():
         year_end_balances: dict[int, float] = {}
         year_avg_balances: dict[int, float] = {}
 
         for yr, df in year_map.items():
-            acct_rows = df[df["总账科目"].astype(str).str[:4] == prefix]
+            df = _ensure_category(df)
+            acct_rows = df[df["_acct_category"].eq(category)]
             if acct_rows.empty:
                 continue
             dec_rows = acct_rows[acct_rows["过账日期"].dt.month == 12]
@@ -197,7 +231,7 @@ def _yearend_balance_buildup(year_map: dict[int, pd.DataFrame]) -> list[CrossYea
             if first_bal > 0 and last_bal / first_bal > 1.5:
                 findings.append(CrossYearFinding(
                     category="期末余额持续累积",
-                    description=f"{acct_name}（{prefix}）年末余额从{first_yr}到{last_yr}持续增长，累计增幅{last_bal/first_bal:.1f}x，疑似虚增资产或收入造假积累",
+                    description=f"{acct_name}年末余额从{first_yr}到{last_yr}持续增长，累计增幅{last_bal/first_bal:.1f}x，疑似虚增资产或收入造假积累",
                     years_involved=list(year_end_balances.keys()),
                     voucher_ids=[],
                     amount=last_bal - first_bal,
@@ -276,13 +310,20 @@ def _expense_category_spike(year_map: dict[int, pd.DataFrame]) -> list[CrossYear
     if len(years) < 2:
         return findings
 
-    # 关注费用类科目（6开头，非收入）
-    expense_prefixes = ["6601", "6602", "6603", "6711", "6801"]
+    # 关注费用类（含费用 / 研发 / 财务费用 / 税金及附加）的年度突变。
+    # 这里直接按"自动分类后的类别"分桶，跨年规模差异更直观。
+    watch_categories = [
+        ("费用", CAT_EXPENSE),
+        ("研发费用", CAT_RD_EXPENSE),
+        ("财务费用", CAT_FINANCIAL_EXPENSE),
+        ("税金及附加", CAT_TAX_SURCHARGE),
+    ]
 
-    for prefix in expense_prefixes:
+    for label, category in watch_categories:
         year_totals: dict[int, float] = {}
         for yr, df in year_map.items():
-            rows = df[df["总账科目"].astype(str).str[:4] == prefix]
+            df = _ensure_category(df)
+            rows = df[df["_acct_category"].eq(category)]
             year_totals[yr] = float(rows["凭证货币价值"].abs().sum())
 
         if len(year_totals) < 2 or all(v == 0 for v in year_totals.values()):
@@ -295,12 +336,12 @@ def _expense_category_spike(year_map: dict[int, pd.DataFrame]) -> list[CrossYear
             if prev_amt > 0 and curr_amt / prev_amt > 2.5:
                 findings.append(CrossYearFinding(
                     category="费用科目年度突变",
-                    description=f"科目{prefix}：{curr_yr}年发生额{curr_amt:,.0f}，是{prev_yr}年{prev_amt:,.0f}的{curr_amt/prev_amt:.1f}倍，异常放量",
+                    description=f"{label}类：{curr_yr}年发生额{curr_amt:,.0f}，是{prev_yr}年{prev_amt:,.0f}的{curr_amt/prev_amt:.1f}倍，异常放量",
                     years_involved=[prev_yr, curr_yr],
                     voucher_ids=[],
                     amount=curr_amt - prev_amt,
                     severity="中",
-                    evidence={"account_prefix": prefix, "prev_amount": round(prev_amt, 2), "curr_amount": round(curr_amt, 2)},
+                    evidence={"category": label, "prev_amount": round(prev_amt, 2), "curr_amount": round(curr_amt, 2)},
                 ))
 
     return findings

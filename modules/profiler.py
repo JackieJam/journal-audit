@@ -262,10 +262,23 @@ def _account_structure(df: pd.DataFrame) -> dict:
     # 三级科目 Top30（更细粒度）
     top_acct6 = df["_acct6"].value_counts().head(30)
 
-    # 关键科目是否存在
-    acct4_set = set(df["_acct4"].unique())
-    has_revenue = bool(acct4_set & {"6001", "6051"})
-    has_cost = bool(acct4_set & {"6401", "6402"})
+    # 关键科目是否存在（按自动分类结果检测，与可视化模块口径一致）
+    acct4_set = set(df["_acct4"].astype(str).unique())
+    name_col = next(
+        (c for c in ("总账科目：长文本", "总账科目：短文本") if c in df.columns),
+        None,
+    )
+    if name_col is not None:
+        from modules.account_classifier import (
+            auto_classify, CAT_REVENUE, CAT_COST,
+        )
+        unique_names = df[name_col].fillna("").astype(str).unique()
+        cats_seen = {auto_classify(n) for n in unique_names}
+        has_revenue = CAT_REVENUE in cats_seen
+        has_cost = CAT_COST in cats_seen
+    else:
+        has_revenue = False
+        has_cost = False
     has_mfg_cost = "8143" in acct4_set  # 制造费用分摊
     has_production_cost = "5001" in acct4_set  # 生产成本
 
@@ -445,7 +458,20 @@ def build_financial_summary(df: pd.DataFrame, year: int) -> dict[str, Any]:
     visual_work = add_analysis_columns(df)
     monthly_pnl_view = build_monthly_revenue_cost_view_from_work(visual_work)
 
+    # 把分类列回填到 df，便于后续按类别筛选
+    df["_acct_category"] = visual_work["_acct_category"].values
+
+    from modules.account_classifier import (
+        CAT_REVENUE,
+        CAT_COST,
+        CAT_EXPENSE,
+        CAT_RD_EXPENSE,
+        CAT_FINANCIAL_EXPENSE,
+        CAT_TAX_SURCHARGE,
+    )
+
     def _sum_by_acct4(prefix: str, col: str = "_abs") -> float:
+        # 兼容历史调用：4 位精确匹配（用于投资收益 6111 / 营业外 6301/6711 等无对应分类的兜底）
         return float(df[df["_acct4"] == prefix][col].sum())
 
     def _sum_credit_normal(prefix: str) -> float:
@@ -461,39 +487,47 @@ def build_financial_summary(df: pd.DataFrame, year: int) -> dict[str, Any]:
             return "外部关联方"
         return "第三方"
 
-    def _sum_pnl(acct4_values: list[str], category: str | None = None) -> float:
-        rows = visual_work[visual_work["_acct4"].isin(acct4_values)]
+    def _sum_pnl_by_mask(mask: pd.Series, category: str | None = None) -> float:
+        rows = visual_work.loc[mask]
         if category:
             rows = rows[rows["_pnl_category"] == category]
         return float(rows["_pnl_effect"].sum())
 
-    def _sum_cost(acct4_values: list[str], category: str | None = None) -> float:
-        return -_sum_pnl(acct4_values, category)
+    revenue_mask = visual_work["_acct_category"].eq(CAT_REVENUE)
+    cost_mask = visual_work["_acct_category"].eq(CAT_COST)
 
-    # ── 收入（6001=主营，6051=其他）──
+    # ── 收入分类（类别细分用 _pnl_category，主要凭 SAP 标准 6001 才有"主营业务-X"标签）──
+    revenue_categorized = {
+        "主营业务收入_第三方": _sum_pnl_by_mask(revenue_mask, "主营业务-第三方"),
+        "主营业务收入_内部关联方": _sum_pnl_by_mask(revenue_mask, "主营业务-内部关联方"),
+        "主营业务收入_外部关联方": _sum_pnl_by_mask(revenue_mask, "主营业务-外部关联方"),
+    }
+    total_revenue = _sum_pnl_by_mask(revenue_mask)
     revenue = {
-        "主营业务收入_第三方": _sum_pnl(["6001"], "主营业务-第三方"),
-        "主营业务收入_内部关联方": _sum_pnl(["6001"], "主营业务-内部关联方"),
-        "主营业务收入_外部关联方": _sum_pnl(["6001"], "主营业务-外部关联方"),
-        "其他业务收入": _sum_pnl(["6051"]),
+        **revenue_categorized,
+        # 其他业务收入 = 总收入减去三个主营分类（兼容非 6001 前缀的收入科目）
+        "其他业务收入": total_revenue - sum(revenue_categorized.values()),
     }
-    revenue["total"] = sum(revenue.values())
+    revenue["total"] = total_revenue
 
-    # ── 成本（6401=主营，6402=其他）──
-    cost = {
-        "主营业务成本_第三方": _sum_cost(["6401"], "主营业务-第三方"),
-        "主营业务成本_内部关联方": _sum_cost(["6401"], "主营业务-内部关联方"),
-        "主营业务成本_外部关联方": _sum_cost(["6401"], "主营业务-外部关联方"),
-        "其他业务成本": _sum_cost(["6402"]),
+    # ── 成本分类 ──
+    cost_categorized = {
+        "主营业务成本_第三方": -_sum_pnl_by_mask(cost_mask, "主营业务-第三方"),
+        "主营业务成本_内部关联方": -_sum_pnl_by_mask(cost_mask, "主营业务-内部关联方"),
+        "主营业务成本_外部关联方": -_sum_pnl_by_mask(cost_mask, "主营业务-外部关联方"),
     }
-    cost["total"] = sum(cost.values())
+    total_cost = -_sum_pnl_by_mask(cost_mask)
+    cost = {
+        **cost_categorized,
+        "其他业务成本": total_cost - sum(cost_categorized.values()),
+    }
+    cost["total"] = total_cost
 
     gross_profit = revenue["total"] - cost["total"]
     gross_margin = gross_profit / revenue["total"] if revenue["total"] > 0 else 0
 
     # ── 费用分类（按总账科目：长文本的关键词匹配）──
-    # 适用于管理费用(6602)、销售费用(6601) 等损益科目
-    exp_mask = df["_acct4"].isin(["6601", "6602", "6910"])
+    exp_mask = df["_acct_category"].eq(CAT_EXPENSE)
     exp_df = df[exp_mask].copy()
     exp_text = exp_df["_text"]
 
@@ -543,13 +577,16 @@ def build_financial_summary(df: pd.DataFrame, year: int) -> dict[str, Any]:
                 clean_name = txt.replace("生产成本-", "").strip()
                 production_cost[clean_name] = float(val)
 
-    # ── 其他损益科目 ──
-    rd_expense = _sum_debit_normal("6604") + _sum_debit_normal("6920")  # 研发费用
-    financial_expense = _sum_debit_normal("6603")
+    # ── 其他损益科目（按自动分类）──
+    def _sum_by_category(category: str, col: str) -> float:
+        return float(df.loc[df["_acct_category"].eq(category), col].sum())
+
+    rd_expense = _sum_by_category(CAT_RD_EXPENSE, "_debit_normal")
+    financial_expense = _sum_by_category(CAT_FINANCIAL_EXPENSE, "_debit_normal")
     investment_income = _sum_credit_normal("6111")
     non_operating_income = _sum_credit_normal("6301")
     non_operating_expense = _sum_debit_normal("6711")
-    tax_surcharge = _sum_debit_normal("6403")
+    tax_surcharge = _sum_by_category(CAT_TAX_SURCHARGE, "_debit_normal")
 
     # ── 月度趋势（收入/成本/毛利），与审计可视化总计口径一致 ──
     monthly_by_month = monthly_pnl_view.set_index("月份")

@@ -13,19 +13,21 @@ from typing import Iterable
 import pandas as pd
 
 from config.accounts import (
-    REVENUE_PREFIXES,
-    COST_PREFIXES,
-    AR_PREFIX,
-    OTHER_RECEIVABLE_PREFIX,
-    AP_PREFIX,
-    AP_ACCRUAL_PREFIX,
-    OTHER_PAYABLE_PREFIX,
-    EXPENSE_PREFIXES,
-    RD_EXPENSE_PREFIXES,
-    FINANCIAL_EXPENSE_PREFIX,
-    TAX_SURCHARGE_PREFIX,
     EXPENSE_CATEGORY_PATTERNS,
     DEFAULT_ADJUSTMENT_KEYWORDS,
+)
+from modules.account_classifier import (
+    CAT_AP,
+    CAT_AP_ACCRUAL,
+    CAT_AR,
+    CAT_COST,
+    CAT_EXPENSE,
+    CAT_FINANCIAL_EXPENSE,
+    CAT_OTHER_PAYABLE,
+    CAT_OTHER_RECEIVABLE,
+    CAT_RD_EXPENSE,
+    CAT_REVENUE,
+    CAT_TAX_SURCHARGE,
 )
 from modules.data_columns import (
     add_analysis_columns,
@@ -52,9 +54,10 @@ def build_monthly_revenue_cost_view(df: pd.DataFrame) -> pd.DataFrame:
 def build_income_cost_category_options_from_work(work: pd.DataFrame) -> list[str]:
     """收入成本月度图可选分类：总计 + 按损益科目名称拆出的业务分类。"""
     work = ensure_analysis_columns(work)
+    pnl_mask = work["_acct_category"].isin([CAT_REVENUE, CAT_COST])
     categories = [
         c
-        for c in work.loc[work["_acct4"].isin(REVENUE_PREFIXES + COST_PREFIXES), "_pnl_category"]
+        for c in work.loc[pnl_mask, "_pnl_category"]
         .dropna()
         .astype(str)
         .unique()
@@ -87,17 +90,30 @@ def build_monthly_revenue_cost_view_from_work(
         source = work
 
     rows: list[dict] = []
+    cat = source["_acct_category"]
+    revenue_mask = cat.eq(CAT_REVENUE)
+    cost_mask = cat.eq(CAT_COST)
+    # "费用" 这里囊括费用 / 研发费用 / 财务费用 / 税金及附加，便于"全口径"视图汇总
+    expense_mask = cat.isin([CAT_EXPENSE, CAT_RD_EXPENSE, CAT_FINANCIAL_EXPENSE, CAT_TAX_SURCHARGE])
     for month in range(1, 13):
         m = source[source["_month"] == month]
-        revenue = m[m["_acct4"].isin(REVENUE_PREFIXES)]
-        cost = m[m["_acct4"].isin(COST_PREFIXES)]
+        m_rev_mask = revenue_mask.reindex(m.index, fill_value=False)
+        m_cost_mask = cost_mask.reindex(m.index, fill_value=False)
+        m_exp_mask = expense_mask.reindex(m.index, fill_value=False)
+        revenue = m[m_rev_mask]
+        cost = m[m_cost_mask]
+        expense = m[m_exp_mask]
 
         income_h = float(revenue.loc[revenue["_dc"] == "H", "_amount_raw"].sum())
         income_s = float(revenue.loc[revenue["_dc"] == "S", "_amount_raw"].sum())
         cost_s = float(cost.loc[cost["_dc"] == "S", "_amount_raw"].sum())
         cost_h = float(cost.loc[cost["_dc"] == "H", "_amount_raw"].sum())
+        # 费用借方为正常方向（增加费用），贷方冲销
+        expense_s = float(expense.loc[expense["_dc"] == "S", "_amount_raw"].sum())
+        expense_h = float(expense.loc[expense["_dc"] == "H", "_amount_raw"].sum())
         net_revenue = -(income_h + income_s)
         net_cost_effect = -(cost_s + cost_h)
+        net_expense = expense_s + expense_h  # 借方为正→费用增加
 
         rows.append({
             "月份": month,
@@ -105,9 +121,13 @@ def build_monthly_revenue_cost_view_from_work(
             "收入S影响": income_s,
             "成本S影响": cost_s,
             "成本H影响": cost_h,
+            "费用S影响": expense_s,
+            "费用H影响": expense_h,
             "净收入": net_revenue,
             "净成本影响": net_cost_effect,
+            "净费用": net_expense,
             "毛利": net_revenue + net_cost_effect,
+            "营业利润": net_revenue + net_cost_effect - net_expense,
         })
     return pd.DataFrame(rows)
 
@@ -119,7 +139,8 @@ def build_customer_top10(df: pd.DataFrame, top_n: int | None = 10) -> pd.DataFra
 
 def build_customer_top10_from_work(work: pd.DataFrame, top_n: int | None = 10) -> pd.DataFrame:
     work = ensure_analysis_columns(work)
-    revenue = work[work["_acct4"].isin(REVENUE_PREFIXES) & (work["_customer_display"] != "未维护")]
+    revenue_mask = work["_acct_category"].eq(CAT_REVENUE)
+    revenue = work[revenue_mask & (work["_customer_display"] != "未维护")]
     if revenue.empty:
         return pd.DataFrame(columns=["客户", "收入H影响", "收入S影响", "净收入", "应收S发生额", "占比"])
 
@@ -132,7 +153,7 @@ def build_customer_top10_from_work(work: pd.DataFrame, top_n: int | None = 10) -
         })
     result = pd.DataFrame(rev_rows)
 
-    ar = work[work["_acct4"] == AR_PREFIX]
+    ar = work[work["_acct_category"].eq(CAT_AR)]
     if not ar.empty:
         ar_debit = (
             ar[ar["_customer_display"] != "未维护"]
@@ -162,12 +183,12 @@ def _filter_category(source: pd.DataFrame, category: str | None) -> pd.DataFrame
 
 def _revenue_rows(work: pd.DataFrame, category: str | None = None) -> pd.DataFrame:
     source = _filter_category(work, category)
-    return source[source["_acct4"].isin(REVENUE_PREFIXES)].copy()
+    return source[source["_acct_category"].eq(CAT_REVENUE)].copy()
 
 
 def _cost_rows(work: pd.DataFrame, category: str | None = None) -> pd.DataFrame:
     source = _filter_category(work, category)
-    return source[source["_acct4"].isin(COST_PREFIXES)].copy()
+    return source[source["_acct_category"].eq(CAT_COST)].copy()
 
 
 def build_revenue_customer_material_summary_from_work(
@@ -359,7 +380,10 @@ def build_supplier_top10(df: pd.DataFrame, top_n: int | None = 10) -> pd.DataFra
 def build_supplier_top10_from_work(work: pd.DataFrame, top_n: int | None = 10) -> pd.DataFrame:
     """基于已补充分析列的 DataFrame 生成供应商 TopN。"""
     work = ensure_analysis_columns(work)
-    ap = work[(work["_acct4"] == AP_PREFIX) & (work["_vendor_display"] != "未维护")]
+    ap = work[
+        work["_acct_category"].eq(CAT_AP)
+        & (work["_vendor_display"] != "未维护")
+    ]
     if ap.empty:
         return pd.DataFrame(columns=["供应商", "应付H发生额", "应付S发生额", "占比"])
 
@@ -433,7 +457,7 @@ def build_customer_revenue_entry_top10_from_work(
     """基于已补充分析列的 DataFrame 生成指定客户收入分录，默认全量。"""
     work = ensure_analysis_columns(work)
     detail = work[
-        work["_acct4"].isin(REVENUE_PREFIXES)
+        work["_acct_category"].eq(CAT_REVENUE)
         & (work["_customer_display"] == customer)
     ].copy()
     if detail.empty:
@@ -487,21 +511,21 @@ def build_monthly_revenue_cost_entry_top10_from_work(
 
     if metric == "revenue":
         detail = source[
-            source["_acct4"].isin(REVENUE_PREFIXES)
+            source["_acct_category"].eq(CAT_REVENUE)
             & (source["_month"] == month)
         ].copy()
         amount_label = "收入影响"
         detail[amount_label] = detail["_amount_raw"]
     elif metric == "cost":
         detail = source[
-            source["_acct4"].isin(COST_PREFIXES)
+            source["_acct_category"].eq(CAT_COST)
             & (source["_month"] == month)
         ].copy()
         amount_label = "成本发生额"
         detail[amount_label] = detail["_amount_raw"]
     elif metric == "gross":
         detail = source[
-            source["_acct4"].isin(REVENUE_PREFIXES + COST_PREFIXES)
+            source["_acct_category"].isin([CAT_REVENUE, CAT_COST])
             & (source["_month"] == month)
         ].copy()
         amount_label = "毛利影响"
@@ -533,14 +557,14 @@ def build_income_cost_abnormal_entry_top10_from_work(
 
     if direction == "income_s":
         detail = source[
-            source["_acct4"].isin(REVENUE_PREFIXES)
+            source["_acct_category"].eq(CAT_REVENUE)
             & (source["_dc"] == "S")
             & (source["_month"] == month)
         ].copy()
         amount_label = "收入S影响"
     elif direction == "cost_h":
         detail = source[
-            source["_acct4"].isin(COST_PREFIXES)
+            source["_acct_category"].eq(CAT_COST)
             & (source["_dc"] == "H")
             & (source["_month"] == month)
         ].copy()
@@ -579,13 +603,13 @@ def build_expense_entry_top10_from_work(
         return pd.DataFrame()
 
     if category == "研发费用":
-        detail = work[work["_acct4"].isin(RD_EXPENSE_PREFIXES)].copy()
+        detail = work[work["_acct_category"].eq(CAT_RD_EXPENSE)].copy()
     elif category in ("财务费用", "财务费用(汇兑)"):
-        detail = work[work["_acct4"] == FINANCIAL_EXPENSE_PREFIX].copy()
+        detail = work[work["_acct_category"].eq(CAT_FINANCIAL_EXPENSE)].copy()
     elif category == "税金及附加":
-        detail = work[work["_acct4"] == TAX_SURCHARGE_PREFIX].copy()
+        detail = work[work["_acct_category"].eq(CAT_TAX_SURCHARGE)].copy()
     else:
-        expense_base = work[work["_acct4"].isin(EXPENSE_PREFIXES)].copy()
+        expense_base = work[work["_acct_category"].eq(CAT_EXPENSE)].copy()
         masks = _expense_category_masks(expense_base)
         if category == "其他费用":
             matched = pd.Series(False, index=expense_base.index)
@@ -626,7 +650,7 @@ def build_supplier_payable_entry_top10_from_work(
     """基于已补充分析列的 DataFrame 生成指定供应商应付分录，默认全量。"""
     work = ensure_analysis_columns(work)
     detail = work[
-        (work["_acct4"] == AP_PREFIX)
+        work["_acct_category"].eq(CAT_AP)
         & (work["_vendor_display"] == supplier)
     ].copy()
     if detail.empty:
@@ -670,10 +694,15 @@ def build_cost_focus_entries_from_work(
 
 def _ap_accrual_rows(work: pd.DataFrame) -> pd.DataFrame:
     work = ensure_analysis_columns(work)
+    # 应付暂估在分类阶段已经从科目名称匹配到（含"暂估"/"GR/IR"），
+    # 同时把名称含暂估关键词但被归到"应付"的科目兼容进来，避免遗漏。
     account_name = work.get("_account_name", pd.Series("", index=work.index)).astype(str)
     return work[
-        work["_acct"].str.startswith(AP_ACCRUAL_PREFIX)
-        | (work["_acct4"].eq(AP_PREFIX) & account_name.str.contains("暂估|GR/IR", na=False))
+        work["_acct_category"].eq(CAT_AP_ACCRUAL)
+        | (
+            work["_acct_category"].eq(CAT_AP)
+            & account_name.str.contains("暂估|GR/IR", na=False)
+        )
     ]
 
 
@@ -696,11 +725,7 @@ def build_ap_accrual_monthly_view_from_work(work: pd.DataFrame) -> pd.DataFrame:
 
 def _other_receivable_rows(work: pd.DataFrame) -> pd.DataFrame:
     work = ensure_analysis_columns(work)
-    account_name = work.get("_account_name", pd.Series("", index=work.index)).astype(str)
-    return work[
-        work["_acct4"].eq(OTHER_RECEIVABLE_PREFIX)
-        | account_name.str.contains("其他应收", na=False)
-    ]
+    return work[work["_acct_category"].eq(CAT_OTHER_RECEIVABLE)]
 
 
 def build_other_receivable_monthly_view_from_work(work: pd.DataFrame) -> pd.DataFrame:
@@ -755,11 +780,7 @@ def build_other_receivable_entry_top10_from_work(
 
 def _other_payable_rows(work: pd.DataFrame) -> pd.DataFrame:
     work = ensure_analysis_columns(work)
-    account_name = work.get("_account_name", pd.Series("", index=work.index)).astype(str)
-    return work[
-        work["_acct4"].eq(OTHER_PAYABLE_PREFIX)
-        | account_name.str.contains("其他应付", na=False)
-    ]
+    return work[work["_acct_category"].eq(CAT_OTHER_PAYABLE)]
 
 
 def build_other_payable_monthly_view_from_work(work: pd.DataFrame) -> pd.DataFrame:

@@ -194,7 +194,8 @@ hr, [data-testid="stDivider"] {
 """, unsafe_allow_html=True)
 
 # ── 模块导入 ──
-from modules.ingestion import load_files, summarize_years
+from modules.ingestion import load_files, summarize_years, detect_columns
+from modules import column_check
 from modules.profiler import build_profile, build_financial_summary, profiles_to_summary_text, financials_to_summary_text
 from modules.visual_analysis import (
     DEFAULT_ADJUSTMENT_KEYWORDS,
@@ -293,6 +294,9 @@ def _init_state():
         "df_unified": None,
         "year_map": {},
         "year_summary": [],
+        "missing_columns": [],
+        "column_mapping": {},
+        "account_category_overrides": {},
         "profiles": {},
         "profiles_version": None,
         "cross_year_findings": [],
@@ -452,6 +456,9 @@ def _reset_current_project(project_name: str = "") -> None:
     st.session_state.df_unified = None
     st.session_state.year_map = {}
     st.session_state.year_summary = []
+    st.session_state.missing_columns = []
+    st.session_state.column_mapping = {}
+    st.session_state.account_category_overrides = {}
     st.session_state.profiles = {}
     st.session_state.profiles_version = None
     st.session_state.cross_year_findings = []
@@ -545,6 +552,9 @@ def _clear_loaded_data():
     st.session_state.df_unified = None
     st.session_state.year_map = {}
     st.session_state.year_summary = []
+    st.session_state.missing_columns = []
+    st.session_state.column_mapping = {}
+    st.session_state.account_category_overrides = {}
     st.session_state.loaded_file_signature = None
     _clear_analysis_results()
 
@@ -1177,6 +1187,7 @@ def _cross_year_evidence_rows(finding: Any) -> list[dict[str, str]]:
         "out_amount": ("年末流出金额", "年末向该对手方付出的资金规模。"),
         "in_amount": ("次年Q1流入金额", "次年一季度从同一对手方收回的资金规模。"),
         "account_prefix": ("科目前缀", "用于定位异常放量的会计科目。"),
+        "category": ("科目类别", "按自动分类识别出的费用大类（费用 / 研发 / 财务 / 税金）。"),
         "prev_amount": ("上年发生额", "对比基准年份的发生额。"),
         "curr_amount": ("本年发生额", "异常年份的发生额。"),
         "new_pair_count": ("新增科目组合数", "历史未出现过的借贷组合数量。"),
@@ -2982,6 +2993,42 @@ def _render_adjustment_main(*, df_audit: pd.DataFrame, audit_year_sel: int) -> N
 
 # ── 顶部页签 ──
 TAB_NAMES = ["上传数据", "序时账分析", "规则管理", "样本抽取"]
+
+
+# ── 字段缺失影响矩阵：标准列 -> 受影响的分析模块 ──
+_COLUMN_IMPACT_MAP: dict[str, list[str]] = {
+    "凭证类型": ["手工凭证识别", "白名单过滤"],
+    "供应商编号": ["供应商集中度", "应付暂估", "化整为零"],
+    "客户": ["客户集中度", "收入分析"],
+    "用户名": ["用户集中度", "职责分离分析"],
+    "公司代码货币价值": ["所有金额相关分析（已退化为凭证货币价值）"],
+    "过账期间": ["Period 13 年末调整识别"],
+    "会计年度": ["跨年调账归集（缺失时按过账日期年份归集，可能错把期后调整记入次年）"],
+    "文本": ["关键词搜索", "调账/冲销凭证识别", "敏感费用筛查"],
+    "总账科目": ["所有科目维度分析（收入/成本/费用/暂估）"],
+}
+
+
+def _render_missing_columns_banner() -> None:
+    """在分析页顶端展示缺失字段及其影响范围。"""
+    missing = st.session_state.get("missing_columns", []) or []
+    if not missing:
+        return
+    relevant = [c for c in missing if c in _COLUMN_IMPACT_MAP]
+    if not relevant:
+        return
+    with st.expander(
+        f"⚠️ 检测到 {len(relevant)} 个字段在源文件中缺失，部分分析将自动跳过",
+        expanded=False,
+    ):
+        st.caption("以下字段在「上传数据」阶段未映射到源列，相关分析模块会被跳过并给出可审计提示。")
+        rows = [
+            {"缺失字段": col, "受影响的分析": "、".join(_COLUMN_IMPACT_MAP[col])}
+            for col in relevant
+        ]
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.caption("如需补齐，请回到「上传数据」页签重新映射列。")
+
 active_tab_name = st.segmented_control(
     "页签导航", TAB_NAMES,
     default=TAB_NAMES[st.session_state.get("active_tab", 0)],
@@ -3008,6 +3055,7 @@ if st.session_state.active_tab == 1:
         st.info("请先在「上传数据」页签中上传序时账文件。")
     else:
         st.title("📊 数据分析")
+        _render_missing_columns_banner()
 
         needs_profiles = (
             not st.session_state.profiles
@@ -3075,6 +3123,12 @@ if st.session_state.active_tab == 1:
                     "口径", income_cost_options,
                     key=f"income_cost_category_{audit_year_sel}",
                 )
+                full_scope = st.toggle(
+                    "全口径（含费用）",
+                    value=False,
+                    key=f"income_cost_full_scope_{audit_year_sel}",
+                    help="开启后 KPI 显示净收入 / 净成本 / 总费用 / 营业利润，凸显费用对利润的侵蚀",
+                )
 
             monthly_view = (
                 audit_cache["monthly"]
@@ -3087,17 +3141,35 @@ if st.session_state.active_tab == 1:
             total_cost_h = monthly_view["成本H影响"].sum()
 
             net_revenue = -(total_income_h + total_income_s)
-            net_cost = -(total_cost_s + total_cost_h)
-            gross_profit = net_revenue + net_cost
-            with ctl_kpi1:
-                st.metric("净收入", f"{net_revenue/1e4:,.0f}万")
-            with ctl_kpi2:
-                st.metric("净成本", f"{net_cost/1e4:,.0f}万")
-            with ctl_kpi3:
-                st.metric("毛利", f"{gross_profit/1e4:,.0f}万")
-            with ctl_kpi4:
-                voucher_cnt = len(monthly_view) if hasattr(monthly_view, '__len__') else 0
-                st.metric("月数", voucher_cnt)
+            net_cost = total_cost_s + total_cost_h  # 显示成本本身的正值
+            gross_profit = net_revenue - net_cost
+            net_expense = float(monthly_view["净费用"].sum()) if "净费用" in monthly_view.columns else 0.0
+            operating_profit = gross_profit - net_expense
+
+            if full_scope:
+                with ctl_kpi1:
+                    st.metric("净收入", f"{net_revenue/1e4:,.0f}万")
+                with ctl_kpi2:
+                    st.metric("净成本", f"{net_cost/1e4:,.0f}万")
+                with ctl_kpi3:
+                    st.metric("总费用", f"{net_expense/1e4:,.0f}万")
+                with ctl_kpi4:
+                    st.metric(
+                        "营业利润",
+                        f"{operating_profit/1e4:,.0f}万",
+                        delta=f"{(operating_profit-gross_profit)/1e4:,.0f}万 vs 毛利",
+                        delta_color="off",
+                    )
+            else:
+                with ctl_kpi1:
+                    st.metric("净收入", f"{net_revenue/1e4:,.0f}万")
+                with ctl_kpi2:
+                    st.metric("净成本", f"{net_cost/1e4:,.0f}万")
+                with ctl_kpi3:
+                    st.metric("毛利", f"{gross_profit/1e4:,.0f}万")
+                with ctl_kpi4:
+                    voucher_cnt = len(monthly_view) if hasattr(monthly_view, '__len__') else 0
+                    st.metric("月数", voucher_cnt)
 
             SUB_TABS_INNER = ["收入成本", "费用", "暂估往来", "调账冲销", "跨年交叉稽核", "统计画像"]
             if "_sub_tab_inner" not in st.session_state:
@@ -3257,118 +3329,120 @@ if st.session_state.active_tab == 1:
                         )
 
                     st.divider()
-                    customer_top15 = build_customer_top10_from_work(audit_work, top_n=15)
-                    _render_chart_title_with_download(
-                        "客户收入",
-                        df=customer_top15,
-                        file_name=f"{audit_year_sel}_{income_cost_category}_customer_revenue_top15.xlsx",
-                        key=f"download_customer_top15_{audit_year_sel}_{category_key}",
-                        sheet_name="客户收入",
-                    )
-                    st.caption("客户对应收入。保留前 15 大客户，点击柱状图后展示该客户全部收入分录。")
-                    if customer_top15.empty:
-                        st.info("当前口径下暂无可按客户归集的收入。")
-                    else:
-                        customer_top15.attrs["sample_counts"] = candidate_counts["customer"]
-                        customer_event = st.plotly_chart(
-                            customer_revenue_top_chart(customer_top15, audit_year_sel),
-                            use_container_width=True,
-                            key=f"income_page_customer_chart_{audit_year_sel}_{category_key}",
-                            on_select="rerun",
-                            selection_mode="points",
+                    if column_check.guard(["客户"], "客户收入分析"):
+                        customer_top15 = build_customer_top10_from_work(audit_work, top_n=15)
+                        _render_chart_title_with_download(
+                            "客户收入",
+                            df=customer_top15,
+                            file_name=f"{audit_year_sel}_{income_cost_category}_customer_revenue_top15.xlsx",
+                            key=f"download_customer_top15_{audit_year_sel}_{category_key}",
+                            sheet_name="客户收入",
                         )
-                        selected_customer = _selected_bar_label(customer_event)
-
-                        if selected_customer is None:
-
-                            selected_customer = st.session_state.get("chart_sel_customer")
-
+                        st.caption("客户对应收入。保留前 15 大客户，点击柱状图后展示该客户全部收入分录。")
+                        if customer_top15.empty:
+                            st.info("当前口径下暂无可按客户归集的收入。")
                         else:
-
-                            st.session_state["chart_sel_customer"] = selected_customer
-                        if selected_customer:
-                            customer_entries = build_customer_revenue_entry_top10_from_work(audit_work, selected_customer)
-                            _render_detail_with_actions(
-
-                                f"{audit_year_sel}年 {selected_customer} 收入全量分录",
-
-                                customer_entries,
-
-                                df_source=df_audit,
-
-                                key=f"chart_panel_customer_{audit_year_sel}_{selected_customer}_{category_key}",
-
-                                source_module="收入成本",
-
-                                source_view="客户收入",
-
-                                selector={
-                                    "kind": "customer_revenue",
-                                    "year": audit_year_sel,
-                                    "customer": selected_customer,
-                                    "category": income_cost_category,
-                                },
-
-                                default_reason=f"客户 {selected_customer} 收入被选中，纳入疑点库复核。",
-
+                            customer_top15.attrs["sample_counts"] = candidate_counts["customer"]
+                            customer_event = st.plotly_chart(
+                                customer_revenue_top_chart(customer_top15, audit_year_sel),
+                                use_container_width=True,
+                                key=f"income_page_customer_chart_{audit_year_sel}_{category_key}",
+                                on_select="rerun",
+                                selection_mode="points",
                             )
+                            selected_customer = _selected_bar_label(customer_event)
+
+                            if selected_customer is None:
+
+                                selected_customer = st.session_state.get("chart_sel_customer")
+
+                            else:
+
+                                st.session_state["chart_sel_customer"] = selected_customer
+                            if selected_customer:
+                                customer_entries = build_customer_revenue_entry_top10_from_work(audit_work, selected_customer)
+                                _render_detail_with_actions(
+
+                                    f"{audit_year_sel}年 {selected_customer} 收入全量分录",
+
+                                    customer_entries,
+
+                                    df_source=df_audit,
+
+                                    key=f"chart_panel_customer_{audit_year_sel}_{selected_customer}_{category_key}",
+
+                                    source_module="收入成本",
+
+                                    source_view="客户收入",
+
+                                    selector={
+                                        "kind": "customer_revenue",
+                                        "year": audit_year_sel,
+                                        "customer": selected_customer,
+                                        "category": income_cost_category,
+                                    },
+
+                                    default_reason=f"客户 {selected_customer} 收入被选中，纳入疑点库复核。",
+
+                                )
 
                     st.divider()
-                    supplier_top15 = build_supplier_top10_from_work(audit_work, top_n=15)
-                    _render_chart_title_with_download(
-                        "供应商应付账款",
-                        df=supplier_top15,
-                        file_name=f"{audit_year_sel}_{income_cost_category}_supplier_payable_top15.xlsx",
-                        key=f"download_supplier_top15_{audit_year_sel}_{category_key}",
-                        sheet_name="供应商应付",
-                    )
-                    st.caption("成本供应商统一使用应付账款供应商口径。保留前 15 大供应商，点击柱状图后展示该供应商全部应付分录。")
-                    if supplier_top15.empty:
-                        st.info("当前口径下暂无可按供应商归集的应付账款数据。")
-                    else:
-                        supplier_top15.attrs["sample_counts"] = candidate_counts["supplier"]
-                        supplier_event = st.plotly_chart(
-                            supplier_payables_top_chart(supplier_top15, audit_year_sel),
-                            use_container_width=True,
-                            key=f"income_page_supplier_chart_{audit_year_sel}_{category_key}",
-                            on_select="rerun",
-                            selection_mode="points",
+                    if column_check.guard(["供应商编号"], "供应商应付分析"):
+                        supplier_top15 = build_supplier_top10_from_work(audit_work, top_n=15)
+                        _render_chart_title_with_download(
+                            "供应商应付账款",
+                            df=supplier_top15,
+                            file_name=f"{audit_year_sel}_{income_cost_category}_supplier_payable_top15.xlsx",
+                            key=f"download_supplier_top15_{audit_year_sel}_{category_key}",
+                            sheet_name="供应商应付",
                         )
-                        selected_supplier = _selected_bar_label(supplier_event)
-
-                        if selected_supplier is None:
-
-                            selected_supplier = st.session_state.get("chart_sel_supplier")
-
+                        st.caption("成本供应商统一使用应付账款供应商口径。保留前 15 大供应商，点击柱状图后展示该供应商全部应付分录。")
+                        if supplier_top15.empty:
+                            st.info("当前口径下暂无可按供应商归集的应付账款数据。")
                         else:
-
-                            st.session_state["chart_sel_supplier"] = selected_supplier
-                        if selected_supplier:
-                            supplier_entries = build_supplier_payable_entry_top10_from_work(audit_work, selected_supplier)
-                            _render_detail_with_actions(
-
-                                f"{audit_year_sel}年 {selected_supplier} 供应商应付全量分录",
-
-                                supplier_entries,
-
-                                df_source=df_audit,
-
-                                key=f"chart_panel_supplier_{audit_year_sel}_{selected_supplier}_{category_key}",
-
-                                source_module="收入成本",
-
-                                source_view="供应商应付",
-
-                                selector={
-                                    "kind": "supplier_payable",
-                                    "year": audit_year_sel,
-                                    "supplier": selected_supplier,
-                                    "category": income_cost_category,
-                                },
-
-                                default_reason=f"供应商 {selected_supplier} 应付交易被选中，作为成本相关口径纳入疑点库复核。",
-
+                            supplier_top15.attrs["sample_counts"] = candidate_counts["supplier"]
+                            supplier_event = st.plotly_chart(
+                                supplier_payables_top_chart(supplier_top15, audit_year_sel),
+                                use_container_width=True,
+                                key=f"income_page_supplier_chart_{audit_year_sel}_{category_key}",
+                                on_select="rerun",
+                                selection_mode="points",
                             )
+                            selected_supplier = _selected_bar_label(supplier_event)
+
+                            if selected_supplier is None:
+
+                                selected_supplier = st.session_state.get("chart_sel_supplier")
+
+                            else:
+
+                                st.session_state["chart_sel_supplier"] = selected_supplier
+                            if selected_supplier:
+                                supplier_entries = build_supplier_payable_entry_top10_from_work(audit_work, selected_supplier)
+                                _render_detail_with_actions(
+
+                                    f"{audit_year_sel}年 {selected_supplier} 供应商应付全量分录",
+
+                                    supplier_entries,
+
+                                    df_source=df_audit,
+
+                                    key=f"chart_panel_supplier_{audit_year_sel}_{selected_supplier}_{category_key}",
+
+                                    source_module="收入成本",
+
+                                    source_view="供应商应付",
+
+                                    selector={
+                                        "kind": "supplier_payable",
+                                        "year": audit_year_sel,
+                                        "supplier": selected_supplier,
+                                        "category": income_cost_category,
+                                    },
+
+                                    default_reason=f"供应商 {selected_supplier} 应付交易被选中，作为成本相关口径纳入疑点库复核。",
+
+                                )
 
             if st.session_state._sub_tab_inner == 1:  # 费用
                 f_audit = financials.get(audit_year_sel)
@@ -3463,7 +3537,8 @@ if st.session_state.active_tab == 1:
                     _render_candidate_recommendations_for_module(income_cost_category, module_filter="调账冲销")
 
                 with adjustment_main_col:
-                    _render_adjustment_main(df_audit=df_audit, audit_year_sel=audit_year_sel)
+                    if column_check.guard(["文本"], "调账/冲销凭证识别"):
+                        _render_adjustment_main(df_audit=df_audit, audit_year_sel=audit_year_sel)
 
             if st.session_state._sub_tab_inner == 4:  # 跨年交叉稽核
                 cross_main_col, cross_suggestion_col = st.columns([6, 4], gap="large")
@@ -3578,18 +3653,20 @@ if st.session_state.active_tab == 1:
                     c1, c2 = st.columns(2)
                     with c1:
                         st.markdown("##### 凭证类型结构")
-                        st.plotly_chart(voucher_type_pie(p, year_sel), use_container_width=True)
-                        with st.expander("凭证类型明细"):
-                            vt = p.get("voucher_type_structure", {})
-                            vt_rows = [
-                                {"类型": tn, "行数": cnt, "凭证数": vt.get("voucher_count_by_type", {}).get(tn, 0),
-                                 "属性": "系统" if tn in vt.get("auto", {}) else "手工/需关注"}
-                                for tn, cnt in vt.get("all", {}).items()
-                            ]
-                            st.dataframe(pd.DataFrame(vt_rows), use_container_width=True, hide_index=True)
+                        if column_check.guard(["凭证类型"], "凭证类型结构"):
+                            st.plotly_chart(voucher_type_pie(p, year_sel), use_container_width=True)
+                            with st.expander("凭证类型明细"):
+                                vt = p.get("voucher_type_structure", {})
+                                vt_rows = [
+                                    {"类型": tn, "行数": cnt, "凭证数": vt.get("voucher_count_by_type", {}).get(tn, 0),
+                                     "属性": "系统" if tn in vt.get("auto", {}) else "手工/需关注"}
+                                    for tn, cnt in vt.get("all", {}).items()
+                                ]
+                                st.dataframe(pd.DataFrame(vt_rows), use_container_width=True, hide_index=True)
                     with c2:
                         st.markdown("##### 用户集中度 Top10")
-                        st.plotly_chart(user_bar_chart(p, year_sel), use_container_width=True)
+                        if column_check.guard(["用户名"], "用户集中度分析"):
+                            st.plotly_chart(user_bar_chart(p, year_sel), use_container_width=True)
 
                     # ── 金额分位数 ──
                     st.divider()

@@ -9,10 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from config.accounts import (
-    REVENUE_PREFIXES,
-    COST_PREFIXES,
-)
+from modules.account_classifier import auto_classify
 
 
 def _account_text_col(df: pd.DataFrame) -> str | None:
@@ -26,6 +23,19 @@ def _safe_text(df: pd.DataFrame, col: str) -> pd.Series:
     if col in df.columns:
         return df[col].fillna("").astype(str)
     return pd.Series("", index=df.index)
+
+
+def _category_overrides() -> dict[str, str]:
+    """从 session_state 读取用户的科目分类覆盖；非 streamlit 环境返回空。"""
+    try:
+        import streamlit as st  # type: ignore
+
+        raw = st.session_state.get("account_category_overrides")
+    except Exception:
+        return {}
+    if isinstance(raw, dict):
+        return {str(k).strip(): str(v).strip() for k, v in raw.items() if str(k).strip()}
+    return {}
 
 
 def _display_party(code: object, name: object) -> str:
@@ -81,6 +91,16 @@ def add_analysis_columns(df: pd.DataFrame) -> pd.DataFrame:
         _pnl_category(acct4, account_name)
         for acct4, account_name in zip(out["_acct4"], out["_account_name"], strict=False)
     ]
+
+    # ── 自动分类 + 用户覆盖 ──
+    overrides = _category_overrides()
+    auto_cats = out["_account_name"].map(auto_classify)
+    if overrides:
+        manual = out["_acct"].map(overrides)
+        out["_acct_category"] = manual.where(manual.notna() & manual.astype(bool), auto_cats)
+    else:
+        out["_acct_category"] = auto_cats
+
     out["_header_text"] = _safe_text(out, "凭证抬头摘要")
     out["_line_text"] = _safe_text(out, "文本")
     out["_combined_text"] = (out["_header_text"] + " " + out["_line_text"]).str.strip()
@@ -126,6 +146,7 @@ def add_analysis_columns(df: pd.DataFrame) -> pd.DataFrame:
 REQUIRED_ANALYSIS_COLUMNS = {
     "_acct",
     "_acct4",
+    "_acct_category",
     "_month",
     "_amount_raw",
     "_amount_abs",

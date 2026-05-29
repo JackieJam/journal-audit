@@ -16,8 +16,26 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from config.accounts import REVENUE_PREFIXES
+from modules.account_classifier import (
+    CAT_COST,
+    CAT_REVENUE,
+    classify_dataframe,
+)
 from modules.data_columns import _pnl_category
+
+
+def _ensure_category(df: pd.DataFrame) -> pd.DataFrame:
+    """给 raw DataFrame 加 _acct_category 列；调用方拿到的可能不带分类。"""
+    if "_acct_category" in df.columns:
+        return df
+    try:
+        import streamlit as st  # type: ignore
+        overrides = st.session_state.get("account_category_overrides")
+        if not isinstance(overrides, dict):
+            overrides = {}
+    except Exception:
+        overrides = {}
+    return classify_dataframe(df, overrides=overrides)
 
 
 @dataclass(frozen=True)
@@ -133,16 +151,18 @@ def _business_base(category: str) -> str:
 
 def _build_trade_voucher_facts(
     df: pd.DataFrame,
-    income_prefixes: list[str],
-    cost_prefixes: list[str],
 ) -> pd.DataFrame:
-    work = df.copy()
+    """构建凭证级事实表，给融资性贸易规则用。
+
+    收入/成本判定基于 _acct_category（自动分类），不再依赖前缀清单。
+    """
+    work = _ensure_category(df).copy()
     work["_acct4"] = work["总账科目"].astype(str).str[:4]
     work["_dc"] = work["借/贷标识"].astype(str).str.strip()
     work["_amount_abs"] = pd.to_numeric(work["凭证货币价值"], errors="coerce").fillna(0).abs()
 
-    income_mask = work["_acct4"].isin(income_prefixes) & (work["_dc"] == "H")
-    cost_mask = work["_acct4"].isin(cost_prefixes) & (work["_dc"] == "S")
+    income_mask = work["_acct_category"].eq(CAT_REVENUE) & (work["_dc"] == "H")
+    cost_mask = work["_acct_category"].eq(CAT_COST) & (work["_dc"] == "S")
 
     income_amount = work[income_mask].groupby("凭证编号")["_amount_abs"].sum()
     cost_amount = work[cost_mask].groupby("凭证编号")["_amount_abs"].sum()
@@ -663,8 +683,8 @@ def rule_yearend_surge(df: pd.DataFrame, cfg: dict) -> RuleResult:
     if not c.get("enabled", True):
         return result
 
-    income_prefixes = list(REVENUE_PREFIXES)
-    rev = df[df["总账科目"].astype(str).str[:4].isin(income_prefixes) & (df["借/贷标识"] == "H")].copy()
+    df = _ensure_category(df)
+    rev = df[df["_acct_category"].eq(CAT_REVENUE) & (df["借/贷标识"] == "H")].copy()
     if rev.empty:
         return result
 
@@ -703,8 +723,6 @@ def rule_yearend_surge(df: pd.DataFrame, cfg: dict) -> RuleResult:
 
 def rule_financing_trade(df: pd.DataFrame, cfg: dict) -> RuleResult:
     c = cfg.get("financing_trade", {})
-    income_prefixes: list[str] = c.get("income_account_prefixes", ["6001", "6051"])
-    cost_prefixes: list[str] = c.get("cost_account_prefixes", ["6401", "6402"])
     min_revenue_amount: float = c.get("min_revenue_amount", 1_000_000)
     low_margin_threshold: float = c.get("low_margin_threshold", c.get("margin_threshold", 0.05))
     max_loss_rate: float = c.get("max_loss_rate", 0.50)
@@ -720,7 +738,7 @@ def rule_financing_trade(df: pd.DataFrame, cfg: dict) -> RuleResult:
 
     non_trade_kw = ["租金", "利息", "存款", "理财", "保险", "补贴", "计提", "冲销", "预提"]
 
-    facts = _build_trade_voucher_facts(df, income_prefixes, cost_prefixes)
+    facts = _build_trade_voucher_facts(df)
     if facts.empty:
         return result
 
