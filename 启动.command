@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
+# ensure uv is on PATH when launched from non-login shells (e.g. PortManager)
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
 echo "启动序时账审计分析平台..."
 echo "项目目录：$ROOT"
 echo
