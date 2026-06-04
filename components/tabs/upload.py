@@ -294,7 +294,8 @@ def _run_parse(
         }
         st.session_state.loaded_file_signature = file_signature
         _clear_analysis_results()
-        _autosave_current_project_state()
+        # 数据集被替换：强制重写重数据，避免「同结构不同内容」的重新上传被签名漏判。
+        _autosave_current_project_state(data_changed=True)
         progress.progress(100, text="解析完成，下方可查看识别概览和科目体系配置。")
     except Exception as e:
         st.error(f"文件读取失败：{e}")

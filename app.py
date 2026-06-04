@@ -383,7 +383,8 @@ def _save_current_project_state() -> tuple[bool, str]:
     if _project_name_exists(project_name, exclude_project_id=project_id):
         return False, f"项目名称“{project_name}”已存在。请先载入该项目，或换一个名称。"
 
-    metadata = kb.save_project_state(project_name, _project_payload(), project_id=project_id)
+    # 手动保存是低频操作，强制重写重数据以保证落盘正确（不依赖结构签名）。
+    metadata = kb.save_project_state(project_name, _project_payload(), project_id=project_id, data_changed=True)
     st.session_state.loaded_project_id = metadata["project_id"]
     _set_project_name_input(project_name)
     years = "、".join(str(y) for y in metadata.get("years", [])) or "未识别"
@@ -393,7 +394,9 @@ def _save_current_project_state() -> tuple[bool, str]:
     return True, f"已保存空白项目：{project_name}"
 
 
-def _autosave_current_project_state() -> None:
+def _autosave_current_project_state(data_changed: bool = False) -> None:
+    """自动保存。``data_changed=True`` 用于数据集本身被替换的路径（如重新上传），
+    强制重写重数据；其余轻状态变更走默认快路径（按结构签名决定是否重写 df）。"""
     project_name = st.session_state.get("engagement_name", "").strip()
     project_id = st.session_state.get("loaded_project_id")
     if not project_name:
@@ -403,7 +406,9 @@ def _autosave_current_project_state() -> None:
     if not project_id and _project_name_exists(project_name):
         return
     try:
-        metadata = kb.save_project_state(project_name, _project_payload(), project_id=project_id)
+        metadata = kb.save_project_state(
+            project_name, _project_payload(), project_id=project_id, data_changed=data_changed
+        )
         st.session_state.loaded_project_id = metadata["project_id"]
     except Exception:
         # 自动保存失败不应打断当前分析流程；手动保存时会显示具体错误。
