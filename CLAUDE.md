@@ -11,7 +11,8 @@ uv run streamlit run app.py
 ## 文件结构
 ```
 app.py                      # Streamlit 主入口（segmented_control 4 页签：上传数据/序时账分析/规则管理/样本抽取）
-                            # ⚠️ 当前 ~4200 行巨石，tab0/tab2 已抽到 components/tabs/，tab1/tab3 仍内联，重构进行中
+                            # ~3100 行：4 个页签均已抽到 components/tabs/，app.py 保留 session/helper 定义并注入各页签
+                            # 各页签 render 函数通过 **helpers 注入 app.py 私有 helper（仍在 app.py 命名空间执行）
 pyproject.toml              # 依赖（uv 管理）
 modules/
   ingestion.py              # 文件加载 + 年份自动识别
@@ -39,7 +40,8 @@ components/
   tabs/
     upload.py               # Tab 0：上传数据（已抽离）
     rules.py                # Tab 2：规则管理 增删改查（已抽离）
-    analysis.py             # Tab 1：分析页签部分子渲染（营运资本/调整项，抽离中）
+    sampling.py             # Tab 3：样本抽取（规则筛选 + 抽样 + Excel 报告，已抽离）
+    analysis.py             # Tab 1：序时账分析（render_analysis_tab 入口 + 营运资本/调整项子渲染，已抽离）
 config/
   accounts.py               # 科目体系与分类常量（科目前缀/凭证类型/费用分类/调整关键词）
   constants.py              # 全局常量（规则顺序、参数中文标签、LLM 默认配置）
