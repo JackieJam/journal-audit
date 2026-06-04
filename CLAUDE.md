@@ -10,22 +10,40 @@ uv run streamlit run app.py
 
 ## 文件结构
 ```
-app.py                      # Streamlit 主入口（4页签：上传数据/序时账分析/规则管理/样本抽取）
+app.py                      # Streamlit 主入口（segmented_control 4 页签：上传数据/序时账分析/规则管理/样本抽取）
+                            # ⚠️ 当前 ~4200 行巨石，tab0/tab2 已抽到 components/tabs/，tab1/tab3 仍内联，重构进行中
 pyproject.toml              # 依赖（uv 管理）
 modules/
   ingestion.py              # 文件加载 + 年份自动识别
-  profiler.py               # 单体统计画像（per year）
-  cross_year.py             # 跨年交叉稽核
+  column_check.py           # 列字段守卫：缺失必要字段则降级跳过并给出可审计提示
+  data_columns.py           # 共享分析派生列补充（add_analysis_columns）
+  account_classifier.py     # 基于科目名称的自动分类器（CAT_AP/AR/REVENUE 等审计类别）
+  profiler.py               # 单体统计画像（per year，@st.cache_data）
+  cross_year.py             # 跨年交叉稽核（七类异常，@st.cache_data，键含分类覆盖签名）
+  visual_analysis.py        # Step 2 审计可视化数据准备（聚合视图）
   rule_generator.py         # LLM 规则校准（读 profile + 经验库）
-  rule_engine.py            # 规则执行（从 rules_config 读参数）
+  rule_engine.py            # 规则执行（从 rules_config 读参数，@st.cache_data）
   llm_verifier.py           # LLM 逐凭证核实
-  reporter.py               # Excel 输出
-  knowledge_base.py         # 经验库读写（~/.audit_tool/）
+  audit_llm_analysis.py     # 审计可视化 LLM 初步解析（仅发送聚合数据，不发 Key/明细，带 fallback）
+  llm_quota.py              # LLM 调用配额跟踪（按 namespace）
+  reporter.py               # Excel 样本清单输出
+  candidate_pool.py         # 疑点库数据层（候选/人工直入分组）
+  knowledge_base.py         # 经验库 + 项目状态 + LLM profile 持久化（~/.audit_tool/，含损坏文件告警）
+  secret_store.py           # 本机/服务器密钥存储（keychain）
+  locking.py                # 跨平台文件锁（并发写保护）
+  runtime_context.py        # 运行时上下文 / 按用户隔离的存储根路径
+  json_utils.py             # 统一 JSON 解析（处理 LLM 返回的 markdown 代码块 + 正则兜底）
 components/
   charts.py                 # Plotly 图表组件
-  sidebar.py                # 侧边栏步骤导航
+  sidebar.py                # 侧边栏
+  tabs/
+    upload.py               # Tab 0：上传数据（已抽离）
+    rules.py                # Tab 2：规则管理 增删改查（已抽离）
+    analysis.py             # Tab 1：分析页签部分子渲染（营运资本/调整项，抽离中）
 config/
-  rule_templates.json       # 规则类型模板（结构定义）
+  accounts.py               # 科目体系与分类常量（科目前缀/凭证类型/费用分类/调整关键词）
+  constants.py              # 全局常量（规则顺序、参数中文标签、LLM 默认配置）
+  default_rules.json        # 默认规则配置（rules_config 基线）
 ```
 
 ## 核心约定
@@ -48,8 +66,13 @@ SAP Period 13 = 年末关闭调整期，归入当年，在分析中单独标记�
 - `st.session_state.llm_judgments`：LLM 核实结果 dict
 
 ### 经验库路径
-`~/.audit_tool/rule_library.json`
-模块 `knowledge_base.py` 负责所有读写，其他模块不直接操作该文件。
+`~/.audit_tool/`（按用户隔离，路径由 `runtime_context.storage_root()` 决定）
+- `rule_library.json`：跨项目沉淀的有效规则
+- `llm_profiles.json`：本机保存的 LLM 方案（不含 Key 明文，权限 0600）
+- `projects/<id>/`：各审计项目的持久化状态 + 自动保存
+
+模块 `knowledge_base.py` 负责所有读写，其他模块不直接操作这些文件。
+JSON 文件解析失败时不静默吞错：记录日志 + 隔离备份为 `*.corrupt-<时间戳>` + 通过 `consume_load_warnings()` 在 UI 暴露。
 
 ### LLM 配置
 - 默认模型：`deepseek-chat`（兼容 OpenAI SDK，支持任意兼容 API）
