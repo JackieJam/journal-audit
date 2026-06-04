@@ -23,7 +23,7 @@ for port in $(seq $START $END); do
 done
 
 if [ "$FOUND" -eq 0 ]; then
-  echo "没有找到运行中的服务（端口 $START ~ $END）"
+  echo "没有找到运行中的服务（端口 ${START} ~ ${END}）"
 fi
 
 sleep 1
@@ -49,4 +49,4 @@ else
   echo "警告：部分进程可能未完全停止，请手动检查。"
 fi
 
-read -r -p "按回车关闭窗口..."
+[ ! -t 0 ] || read -r -p "按回车关闭窗口..."

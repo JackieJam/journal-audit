@@ -12,3 +12,18 @@ dependencies = [
     "chinese-calendar>=1.9",
     "xlsxwriter>=3.2",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "unit: 纯函数 / 单元测试",
+    "integration: 跨模块集成测试",
+]
+addopts = "-q"

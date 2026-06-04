@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
+import streamlit as st
 
 from config.accounts import AUTO_VOUCHER_TYPES
 from modules.account_classifier import (
@@ -57,13 +58,21 @@ class CrossYearFinding:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
-def run_cross_year_analysis(
-    year_map: dict[int, pd.DataFrame],
-) -> list[CrossYearFinding]:
-    """执行全部跨年稽核，返回所有发现。"""
-    if len(year_map) < 2:
-        return []
+def _overrides_signature() -> tuple[tuple[str, str], ...]:
+    """把分类覆盖快照成可哈希的稳定签名，作为缓存键的一部分。"""
+    return tuple(sorted(_category_overrides().items()))
 
+
+@st.cache_data(show_spinner=False)
+def _run_cross_year_cached(
+    year_map: dict[int, pd.DataFrame],
+    overrides_key: tuple[tuple[str, str], ...],
+) -> list[CrossYearFinding]:
+    """实际计算体。``overrides_key`` 仅参与缓存键：分类覆盖变化时强制重算。
+
+    缓存未命中时，下方子函数会读取与 ``overrides_key`` 一致的 session_state
+    快照（二者在同一次调用中生成），因此结果与缓存键保持一致、不会串味。
+    """
     findings: list[CrossYearFinding] = []
     findings.extend(_accrual_reversal_pairs(year_map))
     findings.extend(_revenue_timing_drift(year_map))
@@ -73,6 +82,19 @@ def run_cross_year_analysis(
     findings.extend(_manual_entry_trend(year_map))
     findings.extend(_account_relationship_drift(year_map))
     return findings
+
+
+def run_cross_year_analysis(
+    year_map: dict[int, pd.DataFrame],
+) -> list[CrossYearFinding]:
+    """执行全部跨年稽核，返回所有发现。
+
+    结果按 (年度数据, 分类覆盖签名) 缓存，避免每次 Streamlit 交互都重算
+    七类跨年勾稽。数据或分类覆盖变化时缓存自动失效。
+    """
+    if len(year_map) < 2:
+        return []
+    return _run_cross_year_cached(year_map, _overrides_signature())
 
 
 # ─────────────────────────────────────────────

@@ -70,7 +70,7 @@ echo 正在同步依赖（首次运行需下载，可能需要几分钟）...
 set SYNC_OK=0
 
 :: 第一次尝试：正常同步，显示进度
-uv sync --link-mode=copy
+uv sync --frozen --link-mode=copy
 if !errorlevel! equ 0 (
     set SYNC_OK=1
 ) else (
@@ -78,7 +78,7 @@ if !errorlevel! equ 0 (
     echo 同步失败，尝试清除缓存后重试...
     rd /s /q "%USERPROFILE%\.cache\uv\sdists-v*" 2>nul
     rd /s /q "%USERPROFILE%\.cache\uv\archive-v*" 2>nul
-    uv sync --link-mode=copy
+    uv sync --frozen --link-mode=copy
     if !errorlevel! equ 0 set SYNC_OK=1
 )
 
@@ -86,7 +86,7 @@ if !errorlevel! equ 0 (
 if !SYNC_OK! equ 0 (
     echo.
     echo 尝试无缓存模式同步（将重新下载所有包）...
-    uv sync --link-mode=copy --no-cache
+    uv sync --frozen --link-mode=copy --no-cache
     if !errorlevel! equ 0 set SYNC_OK=1
 )
 
@@ -113,7 +113,7 @@ echo 浏览器访问地址：http://127.0.0.1:!PORT!
 echo 按 Ctrl+C 停止服务
 echo.
 
-uv run streamlit run app.py --server.address 127.0.0.1 --server.port !PORT! --server.headless true
+uv run --no-sync streamlit run app.py --server.address 127.0.0.1 --server.port !PORT! --server.headless true
 
 echo.
 echo 服务已退出。

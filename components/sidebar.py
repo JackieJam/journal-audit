@@ -8,7 +8,7 @@ from __future__ import annotations
 import streamlit as st
 
 from modules import knowledge_base as kb
-from modules import secret_store
+from modules import llm_config
 from modules.runtime_context import storage_namespace_label
 from modules.llm_quota import quota_status
 
@@ -154,9 +154,12 @@ def render_sidebar(
                 except Exception as e:
                     st.error(f"创建失败：{e}")
 
-        # LLM 方案配置。API Key 不写入项目缓存，需来自环境变量、会话输入或本机钥匙串。
-        with st.expander("🔑 LLM 方案配置", expanded=not bool(_resolve_api_key()[0])):
+        # LLM 配置。一个表单 + 一个「保存方案」按钮搞定：方案随本机持久化（刷新自动恢复），
+        # API Key 默认记住到本机钥匙串/加密文件，下次会话无需重输。Key 永不写入项目缓存或方案文件。
+        with st.expander("🔑 LLM 配置", expanded=not bool(_resolve_api_key()[0])):
             cfg = _llm_config()
+
+            # ── 已保存方案：切换 / 删除 ──
             saved_profiles = kb.list_llm_profiles()
             if saved_profiles:
                 profile_by_label = {
@@ -186,7 +189,8 @@ def render_sidebar(
                 load_col, delete_col = st.columns(2)
                 with load_col:
                     if st.button(
-                        "载入所选方案",
+                        "载入",
+                        key="llm_profile_load",
                         disabled=selected_profile is None,
                         use_container_width=True,
                     ):
@@ -196,25 +200,26 @@ def render_sidebar(
                         st.rerun()
                 with delete_col:
                     if st.button(
-                        "删除所选方案",
+                        "删除",
+                        key="llm_profile_delete",
                         disabled=selected_profile is None,
                         use_container_width=True,
                     ):
                         if kb.delete_llm_profile(str((selected_profile or {}).get("profile_id", ""))):
                             _save_llm_config(_initial_llm_config())
                             _set_llm_config_inputs()
-                            st.success("已删除 LLM 方案；API Key 钥匙串未删除。")
+                            st.success("已删除 LLM 方案；本机记住的 API Key 未删除。")
                             st.rerun()
                         else:
                             st.warning("未找到要删除的 LLM 方案。")
             else:
-                st.caption("暂无已保存 LLM 方案。保存后，刷新页面会自动恢复默认方案。")
+                st.caption("暂无已保存方案。点「保存方案」后，刷新页面会自动恢复。")
 
+            # ── 编辑当前方案 ──
             profile_name = st.text_input(
                 "方案名称",
                 value=cfg.get("profile_name", DEFAULT_LLM_CONFIG["profile_name"]),
                 key="llm_profile_name_input",
-                help="方案名称、Base URL、模型和钥匙串别名会随项目保存；API Key 不写入项目文件。",
             )
             base_url = st.text_input(
                 "Base URL",
@@ -226,72 +231,64 @@ def render_sidebar(
                 value=cfg.get("model", DEFAULT_LLM_CONFIG["model"]),
                 key="llm_model_input",
             )
-            keychain_account = st.text_input(
-                "钥匙串别名",
-                value=cfg.get("keychain_account", "default"),
-                key="llm_keychain_account_input",
-                help="同一台 Mac 上可用不同别名保存不同 API Key，例如 openai-prod。",
-            )
-
             _save_llm_config({
                 "profile_name": profile_name.strip() or DEFAULT_LLM_CONFIG["profile_name"],
                 "base_url": base_url.strip() or DEFAULT_LLM_CONFIG["base_url"],
                 "model": model.strip() or DEFAULT_LLM_CONFIG["model"],
-                "key_source": "env_or_keychain",
-                "keychain_account": keychain_account.strip() or "default",
             })
 
-            save_as_default = st.checkbox(
-                "设为刷新后默认方案",
-                value=True,
-                key="llm_save_as_default",
-                help="只保存方案名称、Base URL、模型和钥匙串别名；不会保存 API Key 明文。",
-            )
-            if st.button("保存/更新 LLM 方案", use_container_width=True):
-                try:
-                    saved_profile = kb.save_llm_profile(_llm_config(), set_default=save_as_default)
-                    _save_llm_config(saved_profile)
-                    st.success("LLM 方案已保存。刷新页面会自动恢复默认方案。")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"LLM 方案保存失败：{e}")
-
+            # ── API Key ──
             manual_key = st.text_input(
-                "API Key（本次会话）",
+                "API Key",
                 type="password",
                 placeholder="sk-...",
                 key="_manual_api_key",
-                help="只保存在当前 Streamlit 会话内。也可设置环境变量 DEEPSEEK_API_KEY / OPENAI_API_KEY / LLM_API_KEY。",
+                help="也可设置环境变量 DEEPSEEK_API_KEY / OPENAI_API_KEY / LLM_API_KEY（优先级最高）。",
             )
-            if manual_key and st.button("保存 API Key 到本机钥匙串", use_container_width=True):
-                account = _keychain_account()
-                if secret_store.set_secret(account, manual_key):
-                    st.success(f"已保存到本机钥匙串：{account}")
-                    st.rerun()
-                else:
-                    st.error("保存失败：当前系统不可用 macOS 钥匙串，或 security 命令执行失败。")
+            remember_key = st.checkbox(
+                "记住密钥到本机（下次免输入）",
+                value=True,
+                key="llm_remember_key",
+                help="存入本机钥匙串/加密文件，仅本机可读；绝不写入项目缓存或方案文件。取消勾选并保存可清除。",
+            )
 
+            # ── 单一保存动作：方案 + 密钥一起落地 ──
+            if st.button("保存方案", type="primary", use_container_width=True):
+                try:
+                    saved_profile = kb.save_llm_profile(_llm_config(), set_default=True)
+                    _save_llm_config(saved_profile)
+                    account = saved_profile.get("keychain_account") or "default"
+                    key_msg = ""
+                    typed_key = (manual_key or "").strip()
+                    if remember_key:
+                        if typed_key:
+                            if llm_config.remember_key(account, typed_key):
+                                key_msg = "，密钥已记住到本机"
+                            else:
+                                key_msg = "，但密钥保存失败（本机钥匙串不可用）"
+                    else:
+                        llm_config.forget_key(account)
+                        key_msg = "，已清除本机记住的密钥"
+                    st.success(f"方案已保存{key_msg}；刷新后自动恢复。")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"保存失败：{e}")
+
+            # ── 状态（可审计：来源始终可见）──
             api_key, key_source = _resolve_api_key()
             st.session_state["_api_key"] = api_key
             if api_key:
-                st.success(f"API Key 来源：{key_source}")
+                st.success(f"✅ API Key 已就绪（来源：{key_source}）")
             else:
-                st.warning("尚未配置 API Key。可设置环境变量 DEEPSEEK_API_KEY / OPENAI_API_KEY / LLM_API_KEY，或在下方输入。")
+                st.warning("⚠️ 尚未配置 API Key：在上方输入，或设置环境变量后刷新。")
+            if llm_config.has_remembered_key(_keychain_account()):
+                st.caption("🔒 本机已记住此方案的密钥")
             st.caption(f"当前方案：{_llm_model()} | {_llm_base_url()}")
             quota = quota_status()
             if quota.get("limit", 0):
                 st.caption(
                     f"今日 LLM 调用：{quota.get('current', 0)}/{quota.get('limit', 0)}"
                 )
-            if st.button("保存当前 LLM 方案到项目", use_container_width=True):
-                try:
-                    ok, message = _save_current_project_state()
-                    if ok:
-                        st.success("LLM 方案已写入当前项目缓存；API Key 仍只在环境变量/钥匙串/会话中。")
-                    else:
-                        st.warning(message)
-                except Exception as e:
-                    st.error(f"保存失败：{e}")
 
         st.divider()
 

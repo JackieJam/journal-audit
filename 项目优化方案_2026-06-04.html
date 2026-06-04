@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>序时账审计分析工具 · 工程健康度体检与优化方案</title>
+<style>
+  :root { --fg:#1f2329; --muted:#646a73; --line:#e5e6eb; --bg:#fff;
+    --p0:#d4380d; --p1:#d46b08; --p2:#0958d9; --p3:#389e0d; --ok:#389e0d; --warn:#d4880d; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    color:var(--fg); line-height:1.65; max-width:920px; margin:0 auto; padding:24px 18px; background:var(--bg); }
+  h1 { font-size:24px; margin:0 0 4px; }
+  h2 { font-size:19px; margin:36px 0 12px; padding-bottom:6px; border-bottom:2px solid var(--line); }
+  h3 { font-size:16px; margin:22px 0 8px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:8px; }
+  .lead { background:#f7f8fa; border-left:4px solid var(--p0); padding:14px 16px; border-radius:4px; margin:16px 0; }
+  table { width:100%; border-collapse:collapse; margin:12px 0; font-size:14px; }
+  th,td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#f2f3f5; font-weight:600; }
+  code { background:#f2f3f5; padding:1px 5px; border-radius:3px; font-size:13px;
+    font-family:"SF Mono",Consolas,monospace; }
+  .tag { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; color:#fff; font-weight:600; }
+  .t-p0{background:var(--p0);} .t-p1{background:var(--p1);} .t-p2{background:var(--p2);} .t-p3{background:var(--p3);}
+  .t-ok{background:var(--ok);} .t-warn{background:var(--warn);}
+  .dim { color:var(--muted); }
+  ul { margin:8px 0; padding-left:22px; }
+  li { margin:4px 0; }
+  .grid { display:flex; gap:12px; flex-wrap:wrap; margin:12px 0; }
+  .card { flex:1; min-width:200px; border:1px solid var(--line); border-radius:6px; padding:12px 14px; }
+  .card .n { font-size:22px; font-weight:700; }
+  .foot { margin-top:40px; padding-top:14px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+  @media(max-width:600px){ .card{min-width:140px;} }
+</style>
+</head>
+<body>
+
+<h1>序时账审计分析工具 · 工程健康度体检与优化方案</h1>
+<div class="sub">项目路径 <code>15_journal-audit_序时账分析抽样</code> ｜ 体检日期 2026-06-04 ｜ 代码总量 ~17,285 行 Python</div>
+
+<div class="lead">
+<strong>总体判断：</strong>功能完成度高，但工程健康度欠债明显。两个最大问题是
+<strong>app.py 4198 行的巨石</strong>（违反项目自身 800 行上限约定）和<strong>一个停在一半的 tab 重构</strong>——
+既付了迁移成本又没拿到收益。叠加<strong>零测试</strong>与<strong>文档代码漂移</strong>，对一个主打「可审计」的工具是硬伤。
+</div>
+
+<div class="grid">
+  <div class="card"><div class="n" style="color:var(--p0)">4198</div><div class="dim">app.py 行数（上限 800）</div></div>
+  <div class="card"><div class="n" style="color:var(--p0)">0</div><div class="dim">测试文件</div></div>
+  <div class="card"><div class="n" style="color:var(--warn)">2/4</div><div class="dim">tab 完成抽离</div></div>
+  <div class="card"><div class="n" style="color:var(--warn)">5</div><div class="dim">缓存装饰器（覆盖不足）</div></div>
+</div>
+
+<h2>一、代码与工程健康度 <span class="tag t-warn">最需优先</span></h2>
+<table>
+<thead><tr><th>问题</th><th>证据</th><th>影响</th></tr></thead>
+<tbody>
+<tr><td><strong>app.py 巨石</strong></td><td>4198 行 / 193KB / 101 个函数挤在单文件</td><td>违反 <code>coding-style.md</code> 「200-400 行典型、800 上限」；每次 rerun 全文件重解释</td></tr>
+<tr><td><strong>重构拆了一半</strong></td><td>4 个 tab 仅 tab0(upload)、tab2(rules) 抽到 <code>components/tabs/</code>；tab1 分析(~800行)、tab3 抽样(~330行) 仍内联；<code>analysis.py</code> 只抽了 2 个子函数</td><td>新人不知道改哪；迁移成本已付、收益未得</td></tr>
+<tr><td><strong>文档漂移</strong></td><td><code>CLAUDE.md</code> 文件结构段：列了不存在的 <code>config/rule_templates.json</code>、漏掉 11 个实际模块、还写「4 页签」但导航已是 <code>segmented_control</code></td><td>「可审计」工具文档不符代码，自相矛盾</td></tr>
+<tr><td><strong>零测试</strong></td><td>无 <code>test_*.py</code> / <code>tests/</code> / <code>conftest.py</code></td><td>违反 <code>testing.md</code> 80% 要求；借贷判定、跨年勾稽、规则阈值无回归保护</td></tr>
+<tr><td><strong>死代码</strong></td><td><code>iterations/v1_original/</code> 1300+ 行，被引用 0 次</td><td>可保留作归档，但需标注</td></tr>
+</tbody>
+</table>
+<p><span class="tag t-ok">正面</span> 无 bare except、无 print 残留、无 TODO 堆积、git 无垃圾文件跟踪、.gitignore 已覆盖客户敏感数据 <code>*.xlsx</code>。</p>
+
+<h2>二、响应性与稳定性 <span class="tag t-warn">需改</span></h2>
+<ul>
+<li><strong>缓存覆盖不全：</strong>全项目仅 5 处 <code>@st.cache_data</code>。<code>profiler.build_profile</code>、<code>rule_engine</code> 有缓存，但最重的 <code>cross_year.run_cross_year_analysis</code> 没有缓存（app.py:3093 直接调用），每次交互都重算 7 类跨年勾稽。</li>
+<li><strong>DataFrame 当缓存 key 的隐患：</strong><code>@st.cache_data</code> 对 DataFrame 入参做哈希，多年合并大表哈希耗时、易未命中。建议改用「年份 + 数据签名」当 key。</li>
+<li><strong>单脚本开销：</strong>app.py 4198 行 + 31 个 import，每次 rerun 固定解释成本。</li>
+</ul>
+
+<h2>三、鲁棒性 <span class="tag t-warn">需改</span></h2>
+<ul>
+<li><strong>静默吞错违背「风险可见」：</strong><code>knowledge_base.py</code> 多处 <code>except Exception: return []</code>（63/94/186/204 行），经验库损坏时无声降级——审计师不知道规则库没加载。应至少 log + UI 警示。</li>
+<li><strong>45 处 except Exception</strong> 需分类：哪些是合理 fallback（LLM 调用），哪些在掩盖 bug。</li>
+<li><span class="tag t-ok">正面</span> LLM 有 fallback + quota 控制、keychain 密钥隔离、文件锁防并发写。</li>
+</ul>
+
+<h2>四、完成度 <span class="tag t-ok">高</span></h2>
+<p>四大流程（上传/分析/规则/抽样）齐全，有 LLM 校准、跨年勾稽、候选池、Excel 报告、项目持久化+自动保存、多 LLM profile。缺口集中在测试、文档同步、重构收尾、错误可见性——<strong>都是工程性的，不是功能性的</strong>。</p>
+
+<h2>五、优化路线图（按投入产出排序）</h2>
+<table>
+<thead><tr><th>优先级</th><th>动作</th><th>预估</th></tr></thead>
+<tbody>
+<tr><td><span class="tag t-p0">P0 止血</span></td><td>① 修 CLAUDE.md 文档漂移　② cross_year 加缓存　③ knowledge_base 静默 except 加 log+警示</td><td>半天</td></tr>
+<tr><td><span class="tag t-p2">P2 安全网</span></td><td>搭 pytest，优先覆盖审计正确性核心：借贷 S/H 判定、跨年勾稽、规则阈值读取、Period 13 归并</td><td>2-3 天</td></tr>
+<tr><td><span class="tag t-p1">P1 收尾重构</span></td><td>tab1/tab3 从 app.py 抽到 <code>components/tabs/</code>，app.py 降到 ≤800 行（先 tab3 验证模式，再 tab1）</td><td>1-2 天</td></tr>
+<tr><td><span class="tag t-p3">P3 清理</span></td><td><code>iterations/v1_original/</code> 标注废弃或移入 <code>99_Archive/</code></td><td>0.5 天</td></tr>
+</tbody>
+</table>
+
+<div class="lead" style="border-left-color:var(--p2)">
+<strong>关键决策：先测试，再重构。</strong>没有测试网就搬 800 行分析逻辑，容易搬出隐性 bug 且无从发现。
+因此执行顺序为 <strong>P0 → P2 → P1 → P3</strong>，而非按优先级数字。
+</div>
+
+<div class="foot">
+本报告由 Claude Code 基于静态代码扫描生成，作为优化基线快照。后续修复将按 P0→P2→P1→P3 推进并在每个里程碑提交。
+</div>
+
+</body>
+</html>
