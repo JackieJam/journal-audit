@@ -22,7 +22,7 @@ if ! command -v uv >/dev/null 2>&1; then
   answer="${answer:-Y}"
   if [[ ! "$answer" =~ ^[Yy] ]]; then
     echo "已取消。请手动安装 uv 后重新启动本脚本。"
-    read -r -p "按回车关闭窗口..."
+    [ ! -t 0 ] || read -r -p "按回车关闭窗口..."
     exit 1
   fi
 
@@ -49,7 +49,7 @@ if ! command -v uv >/dev/null 2>&1; then
   if ! $install_ok; then
     echo "uv 安装失败，请手动安装。"
     echo "安装说明：https://docs.astral.sh/uv/getting-started/installation/"
-    read -r -p "按回车关闭窗口..."
+    [ ! -t 0 ] || read -r -p "按回车关闭窗口..."
     exit 1
   fi
 
@@ -57,7 +57,7 @@ if ! command -v uv >/dev/null 2>&1; then
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
   if ! command -v uv >/dev/null 2>&1; then
     echo "uv 已安装但未在当前终端生效。请关闭此窗口，重新打开终端后再试。"
-    read -r -p "按回车关闭窗口..."
+    [ ! -t 0 ] || read -r -p "按回车关闭窗口..."
     exit 1
   fi
 
@@ -84,8 +84,8 @@ find_free_port() {
 
 FREE_PORT=$(find_free_port "$PORT")
 if [ -z "$FREE_PORT" ]; then
-  echo "端口 $ORIGINAL_PORT ~ 8520 全部被占用，请释放端口后重试。"
-  read -r -p "按回车关闭窗口..."
+  echo "端口 ${ORIGINAL_PORT} ~ 8520 全部被占用，请释放端口后重试。"
+  [ ! -t 0 ] || read -r -p "按回车关闭窗口..."
   exit 1
 fi
 
@@ -101,14 +101,14 @@ echo "正在同步依赖（首次运行需下载，可能需要几分钟）..."
 sync_ok=false
 
 # 第一次尝试：正常同步，显示进度
-if uv sync --link-mode=copy; then
+if uv sync --frozen --link-mode=copy; then
   sync_ok=true
 else
   echo
   echo "同步失败，尝试清除缓存后重试..."
   rm -rf ~/.cache/uv/sdists-v* 2>/dev/null || true
   rm -rf ~/.cache/uv/archive-v* 2>/dev/null || true
-  if uv sync --link-mode=copy; then
+  if uv sync --frozen --link-mode=copy; then
     sync_ok=true
   fi
 fi
@@ -117,7 +117,7 @@ fi
 if ! $sync_ok; then
   echo
   echo "尝试无缓存模式同步（将重新下载所有包）..."
-  if uv sync --link-mode=copy --no-cache; then
+  if uv sync --frozen --link-mode=copy --no-cache; then
     sync_ok=true
   fi
 fi
@@ -132,7 +132,7 @@ if ! $sync_ok; then
   echo "  3. 确认本机 Python 版本 >= 3.11（当前：$(python3 --version 2>/dev/null || echo '未检测到')）"
   echo "  4. 检查网络连接是否正常（需要访问 PyPI）"
   echo
-  read -r -p "按回车关闭窗口..."
+  [ ! -t 0 ] || read -r -p "按回车关闭窗口..."
   exit 1
 fi
 
@@ -141,7 +141,7 @@ echo "按 Ctrl+C 停止服务"
 echo
 
 set +e
-uv run streamlit run app.py \
+uv run --no-sync streamlit run app.py \
   --server.address 127.0.0.1 \
   --server.port "$PORT" \
   --server.headless true
@@ -153,10 +153,10 @@ if [[ "$status" -ne 0 ]]; then
   echo "服务启动失败，退出码：$status"
   echo "请把上面的错误信息检查后重试。"
   echo
-  read -r -p "按回车关闭窗口..."
+  [ ! -t 0 ] || read -r -p "按回车关闭窗口..."
   exit "$status"
 fi
 
 echo
 echo "服务已退出。"
-read -r -p "按回车关闭窗口..."
+[ ! -t 0 ] || read -r -p "按回车关闭窗口..."
