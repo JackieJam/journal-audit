@@ -41,7 +41,15 @@ components/
     upload.py               # Tab 0：上传数据（已抽离）
     rules.py                # Tab 2：规则管理 增删改查（已抽离）
     sampling.py             # Tab 3：样本抽取（规则筛选 + 抽样 + Excel 报告，已抽离）
-    analysis.py             # Tab 1：序时账分析（render_analysis_tab 入口 + 营运资本/调整项子渲染，已抽离）
+    analysis/               # Tab 1：序时账分析（已抽离为子包，render_analysis_tab 顶层只做守卫+画像生成+分发）
+      tab.py                #   页签入口 render_analysis_tab（守卫/财务画像生成/顶层 3 子页签分发）
+      _context.py           #   AnalysisContext：setup 阶段共享上下文 + helpers 字典，传给各内层子渲染
+      suspect_filter.py     #   可疑样本库筛选（年份/口径/KPI setup + 6 个内层 sub-tab 分发）
+      income_cost.py        #   内层：收入成本    expense.py 内层：费用
+      working_capital.py    #   内层：暂估往来 + render_working_capital_main（被 app.py 包装注入）
+      adjustment.py         #   内层：调账冲销 + render_adjustment_main（被 app.py 包装注入）
+      cross_year.py         #   内层：跨年交叉稽核    profile.py 内层：统计画像
+      overview.py           #   顶层：财务概况    pool.py 顶层：疑点库管理
 config/
   accounts.py               # 科目体系与分类常量（科目前缀/凭证类型/费用分类/调整关键词）
   constants.py              # 全局常量（规则顺序、参数中文标签、LLM 默认配置）
