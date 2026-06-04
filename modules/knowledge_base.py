@@ -8,6 +8,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import logging
 import pickle
 import re
 import shutil
@@ -18,6 +19,46 @@ from typing import Any
 
 from modules.locking import file_lock
 from modules.runtime_context import storage_root
+
+logger = logging.getLogger(__name__)
+
+# 经验库/配置文件加载异常的可见信号：损坏文件不再被静默吞掉。
+# app 层可调用 consume_load_warnings() 取出并通过 st.warning 暴露给审计师。
+_LOAD_WARNINGS: list[str] = []
+
+
+def consume_load_warnings() -> list[str]:
+    """取出并清空累积的加载告警（UI 用一次性消费）。"""
+    global _LOAD_WARNINGS
+    warnings, _LOAD_WARNINGS = _LOAD_WARNINGS, []
+    return warnings
+
+
+def _read_json_file(path: Path, default: Any) -> Any:
+    """安全读取 JSON 文件。
+
+    - 文件不存在：属正常情况，静默返回 default。
+    - 文件存在但解析失败：视为数据损坏，记录日志 + 隔离备份 + 登记可见告警，
+      再返回 default。绝不静默丢弃，符合「风险可见」原则。
+    """
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        quarantine = path.with_name(
+            f"{path.name}.corrupt-{datetime.now():%Y%m%d%H%M%S}"
+        )
+        try:
+            shutil.copy2(path, quarantine)
+            backup_note = f"，已备份至 {quarantine.name}"
+        except Exception:
+            backup_note = "（备份失败）"
+        msg = f"配置文件 {path.name} 解析失败：{exc}{backup_note}"
+        logger.warning("knowledge_base load error: %s", msg)
+        _LOAD_WARNINGS.append(msg)
+        return default
+
 
 def _root() -> Path:
     return storage_root()
@@ -55,13 +96,7 @@ def _llm_profile_id(profile_name: str) -> str:
 
 
 def _load_llm_profiles() -> list[dict[str, Any]]:
-    path = _llm_profiles_path()
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+    data = _read_json_file(_llm_profiles_path(), [])
     if not isinstance(data, list):
         return []
     profiles: list[dict[str, Any]] = []
@@ -178,13 +213,7 @@ def delete_llm_profile(profile_id: str) -> bool:
 
 
 def _load() -> list[dict]:
-    path = _library_path()
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+    data = _read_json_file(_library_path(), [])
     if not isinstance(data, list):
         return []
     return data
