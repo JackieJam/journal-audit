@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import os
 import io
 import json
 import hashlib
@@ -236,7 +235,7 @@ from modules.llm_verifier import verify_with_llm
 from modules.reporter import generate_report
 from modules import knowledge_base as kb
 from modules import candidate_pool as cp
-from modules import secret_store
+from modules import llm_config
 from components.sidebar import render_sidebar as _sidebar_render
 from components.tabs.upload import render_upload_tab
 from components.tabs.rules import render_rules_tab
@@ -270,25 +269,10 @@ from config.constants import (
 
 
 
-def _normalise_llm_config(cfg: dict[str, Any] | None = None) -> dict[str, str]:
-    source = cfg or {}
-    return {
-        "profile_id": str(source.get("profile_id", "") or "").strip(),
-        "profile_name": str(source.get("profile_name", DEFAULT_LLM_CONFIG["profile_name"]) or "").strip()
-        or DEFAULT_LLM_CONFIG["profile_name"],
-        "model": str(source.get("model", DEFAULT_LLM_CONFIG["model"]) or "").strip()
-        or DEFAULT_LLM_CONFIG["model"],
-        "base_url": str(source.get("base_url", DEFAULT_LLM_CONFIG["base_url"]) or "").strip()
-        or DEFAULT_LLM_CONFIG["base_url"],
-        "key_source": "env_or_keychain",
-        "keychain_account": str(source.get("keychain_account", "default") or "").strip() or "default",
-    }
-
-
 def _initial_llm_config() -> dict[str, str]:
     saved_default = kb.get_default_llm_profile()
     if saved_default:
-        return _normalise_llm_config(saved_default)
+        return llm_config.normalize(saved_default)
     return DEFAULT_LLM_CONFIG.copy()
 
 def _init_state():
@@ -337,45 +321,33 @@ def _project_payload() -> dict:
     return {key: st.session_state.get(key) for key in PROJECT_MEMORY_KEYS}
 
 
+# 以下均为对 modules/llm_config 的薄封装：app.py 只负责把 session_state 接进来，
+# 真正的规范化 / 解析逻辑收在单一事实来源模块里。
 def _llm_config() -> dict[str, str]:
-    cfg: dict[str, Any] = dict(DEFAULT_LLM_CONFIG)
-    saved = st.session_state.get("llm_config")
-    if isinstance(saved, dict):
-        cfg.update({k: v for k, v in saved.items() if v is not None})
-    return _normalise_llm_config(cfg)
+    return llm_config.normalize(st.session_state.get("llm_config"))
 
 
 def _save_llm_config(cfg: dict[str, str]) -> None:
-    st.session_state.llm_config = _normalise_llm_config({**_llm_config(), **cfg})
+    st.session_state.llm_config = llm_config.normalize({**_llm_config(), **(cfg or {})})
 
 
 def _llm_model() -> str:
-    return _llm_config().get("model") or DEFAULT_LLM_CONFIG["model"]
+    return _llm_config()["model"]
 
 
 def _llm_base_url() -> str:
-    return _llm_config().get("base_url") or DEFAULT_LLM_CONFIG["base_url"]
+    return _llm_config()["base_url"]
 
 
 def _keychain_account() -> str:
-    cfg = _llm_config()
-    account = (cfg.get("keychain_account") or "default").strip()
-    return account or "default"
+    return llm_config.key_account(_llm_config())
 
 
 def _resolve_api_key() -> tuple[str, str]:
-    # 按优先级检查多个通用环境变量名
-    for var_name in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "LLM_API_KEY"):
-        env_key = os.environ.get(var_name, "").strip()
-        if env_key:
-            return env_key, f"环境变量 {var_name}"
-    manual_key = st.session_state.get("_manual_api_key", "").strip()
-    if manual_key:
-        return manual_key, "本次会话输入"
-    keychain_key = secret_store.get_secret(_keychain_account())
-    if keychain_key:
-        return keychain_key, f"本机钥匙串：{_keychain_account()}"
-    return "", "未配置"
+    return llm_config.resolve_key(
+        _keychain_account(),
+        manual=st.session_state.get("_manual_api_key", ""),
+    )
 
 
 def _project_name_exists(project_name: str, exclude_project_id: str | None = None) -> bool:
@@ -396,11 +368,11 @@ def _set_project_name_input(project_name: str) -> None:
 
 
 def _set_llm_config_inputs() -> None:
+    """把当前方案推入侧边栏表单的 widget state（载入方案/项目后调用，使表单同步显示）。"""
     cfg = _llm_config()
-    st.session_state["llm_profile_name_input"] = cfg.get("profile_name", DEFAULT_LLM_CONFIG["profile_name"])
-    st.session_state["llm_base_url_input"] = cfg.get("base_url", DEFAULT_LLM_CONFIG["base_url"])
-    st.session_state["llm_model_input"] = cfg.get("model", DEFAULT_LLM_CONFIG["model"])
-    st.session_state["llm_keychain_account_input"] = cfg.get("keychain_account", "default")
+    st.session_state["llm_profile_name_input"] = cfg["profile_name"]
+    st.session_state["llm_base_url_input"] = cfg["base_url"]
+    st.session_state["llm_model_input"] = cfg["model"]
 
 
 def _save_current_project_state() -> tuple[bool, str]:
@@ -509,9 +481,8 @@ def _llm_profile_option_label(profile: dict) -> str:
     name = profile.get("profile_name") or profile.get("profile_id", "未命名方案")
     model = profile.get("model") or DEFAULT_LLM_CONFIG["model"]
     base_url = profile.get("base_url") or DEFAULT_LLM_CONFIG["base_url"]
-    keychain_account = profile.get("keychain_account") or "default"
     prefix = "默认 | " if profile.get("is_default") else ""
-    return f"{prefix}{name} | {model} | {base_url} | 钥匙串:{keychain_account}"
+    return f"{prefix}{name} | {model} | {base_url}"
 
 
 # ── 侧边栏调用 ──

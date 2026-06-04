@@ -163,7 +163,6 @@ DEFAULT_LLM_CONFIG: dict[str, str] = {
     "profile_name": "默认",
     "model": "deepseek-chat",
     "base_url": "https://api.deepseek.com",
-    "key_source": "env_or_keychain",
     "keychain_account": "default",
 }
 

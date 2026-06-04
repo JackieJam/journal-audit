@@ -111,13 +111,13 @@ def _save_llm_profiles(profiles: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     safe_profiles = []
     for profile in profiles:
+        profile_id = str(profile.get("profile_id", "")).strip()
         safe_profiles.append({
-            "profile_id": str(profile.get("profile_id", "")).strip(),
+            "profile_id": profile_id,
             "profile_name": str(profile.get("profile_name", "")).strip(),
             "base_url": str(profile.get("base_url", "")).strip(),
             "model": str(profile.get("model", "")).strip(),
-            "key_source": str(profile.get("key_source", "env_or_keychain")).strip() or "env_or_keychain",
-            "keychain_account": str(profile.get("keychain_account", "default")).strip() or "default",
+            "keychain_account": str(profile.get("keychain_account", "")).strip() or profile_id or "default",
             "is_default": bool(profile.get("is_default", False)),
             "updated_at": str(profile.get("updated_at", "")),
         })
@@ -180,8 +180,8 @@ def save_llm_profile(profile: dict[str, Any], set_default: bool = False) -> dict
             "profile_name": profile_name,
             "base_url": str(profile.get("base_url", "")).strip(),
             "model": str(profile.get("model", "")).strip(),
-            "key_source": str(profile.get("key_source", "env_or_keychain")).strip() or "env_or_keychain",
-            "keychain_account": str(profile.get("keychain_account", "default")).strip() or "default",
+            # 钥匙串账户名默认绑定方案自身 id，做到「一套方案一把钥匙」。
+            "keychain_account": str(profile.get("keychain_account", "")).strip() or profile_id,
             "is_default": bool(set_default or profile.get("is_default", False)),
             "updated_at": datetime.now().isoformat(timespec="seconds"),
         }
