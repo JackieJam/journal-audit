@@ -429,8 +429,78 @@ def list_projects() -> list[dict[str, Any]]:
     return sorted(projects, key=lambda p: p.get("updated_at", ""), reverse=True)
 
 
-def save_project_state(project_name: str, state: dict[str, Any], project_id: str | None = None) -> dict[str, Any]:
-    """保存项目状态，返回项目元数据。不会保存 API Key。"""
+# 重数据键：体积大、gzip+pickle 序列化成本高，单独存 data.pkl.gz；
+# 仅在内容签名变化或显式声明数据已变时才重写，避免每次 autosave 都压缩整个 DataFrame。
+DATA_STATE_KEYS: tuple[str, ...] = ("df_unified", "year_map")
+
+
+def _data_signature(state: dict[str, Any]) -> str:
+    """对重数据计算廉价结构签名（行数 / 列 / dtype / 分年规模）。
+
+    刻意只看结构而非逐格内容：autosave 路径根本不触碰 df，结构不变即可安全跳过重写；
+    会改写 df 内容的路径（上传、分类覆盖）由调用方显式传 ``data_changed=True`` 兜底，
+    保证数据不丢。
+    """
+    parts: list[str] = []
+    df = state.get("df_unified")
+    if df is None:
+        parts.append("df:none")
+    else:
+        try:
+            cols = ",".join(map(str, df.columns))
+            dtypes = ",".join(str(t) for t in df.dtypes)
+            parts.append(f"df:{len(df)}:{cols}:{dtypes}")
+        except Exception:
+            parts.append(f"df:{len(df)}")
+    year_map = state.get("year_map") or {}
+    try:
+        parts.append("ym:" + ",".join(f"{k}={len(v)}" for k, v in sorted(year_map.items())))
+    except Exception:
+        parts.append(f"ym:{len(year_map)}")
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def _atomic_pickle_gz(path: Path, obj: Any) -> None:
+    """gzip+pickle 原子写入：先写临时文件再 rename，避免写入中断导致文件截断。"""
+    tmp_path = path.with_name(path.name + ".tmp")
+    with gzip.open(tmp_path, "wb") as f:
+        pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
+    tmp_path.replace(path)
+
+
+def _read_pickle_gz(main_path: Path, tmp_path: Path) -> tuple[Any, list[str]]:
+    """读取 gzip+pickle，主文件损坏时回退临时文件并修复。返回 (对象 | None, 错误列表)。"""
+    obj = None
+    errors: list[str] = []
+    if main_path.exists():
+        try:
+            with gzip.open(main_path, "rb") as f:
+                obj = pickle.load(f)
+        except Exception as e:
+            errors.append(f"{main_path.name}: {e}")
+    if obj is None and tmp_path.exists():
+        try:
+            with gzip.open(tmp_path, "rb") as f:
+                obj = pickle.load(f)
+            tmp_path.replace(main_path)  # 用临时文件恢复主文件
+        except Exception as e:
+            errors.append(f"{tmp_path.name}: {e}")
+    return obj, errors
+
+
+def save_project_state(
+    project_name: str,
+    state: dict[str, Any],
+    project_id: str | None = None,
+    *,
+    data_changed: bool = False,
+) -> dict[str, Any]:
+    """保存项目状态，返回项目元数据。不会保存 API Key。
+
+    重数据（DATA_STATE_KEYS）与轻状态拆成两个文件：轻状态每次都写（快），
+    重数据仅在 ``data_changed=True``、签名变化或文件缺失时才重写——让高频 autosave
+    不再每次压缩整个 DataFrame。
+    """
     clean_name = project_name.strip()
     if not clean_name:
         raise ValueError("项目名称不能为空")
@@ -445,63 +515,78 @@ def save_project_state(project_name: str, state: dict[str, Any], project_id: str
         payload.pop("_api_key", None)
         payload["engagement_name"] = clean_name
 
-        # 先写临时文件，再原子 rename，防止写入中断导致文件截断
-        state_path = project_dir / "state.pkl.gz"
-        tmp_path = project_dir / "state.pkl.gz.tmp"
-        with gzip.open(tmp_path, "wb") as f:
-            pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
-        tmp_path.replace(state_path)
+        # 拆分：重数据 vs 轻状态（新格式 state.pkl.gz 只含轻状态）
+        data_part = {k: payload.pop(k) for k in DATA_STATE_KEYS if k in payload}
+        light_part = payload
 
-        metadata = _project_metadata(project_id, clean_name, payload)
-        (project_dir / "metadata.json").write_text(
+        light_path = project_dir / "state.pkl.gz"
+        data_path = project_dir / "data.pkl.gz"
+        meta_path = project_dir / "metadata.json"
+
+        signature = _data_signature(state)
+        prev_signature = ""
+        if meta_path.exists():
+            try:
+                prev_signature = json.loads(meta_path.read_text(encoding="utf-8")).get("data_signature", "")
+            except Exception:
+                prev_signature = ""
+        should_write_data = data_changed or not data_path.exists() or signature != prev_signature
+
+        _atomic_pickle_gz(light_path, light_part)
+        if should_write_data:
+            _atomic_pickle_gz(data_path, data_part)
+
+        metadata = _project_metadata(project_id, clean_name, state)
+        metadata["data_signature"] = signature
+        meta_path.write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        try:
-            state_path.chmod(0o600)
-            (project_dir / "metadata.json").chmod(0o600)
-        except Exception:
-            pass
+        for p in (light_path, data_path, meta_path):
+            try:
+                if p.exists():
+                    p.chmod(0o600)
+            except Exception:
+                pass
         return metadata
 
 
 def load_project_state(project_id: str) -> dict[str, Any]:
-    """读取项目状态。只应加载本工具自己保存的本地项目缓存。"""
+    """读取项目状态。只应加载本工具自己保存的本地项目缓存。
+
+    合并轻状态（state.pkl.gz）与重数据（data.pkl.gz）。兼容历史的单文件全量格式：
+    旧 state.pkl.gz 自带 df 而无 data.pkl.gz，合并后仍是完整状态，下次保存自动升级为拆分格式。
+    """
     project_dir = _project_dir(project_id)
-    state_path = project_dir / "state.pkl.gz"
-    tmp_path = project_dir / "state.pkl.gz.tmp"
+    light_path = project_dir / "state.pkl.gz"
+    light_tmp = project_dir / "state.pkl.gz.tmp"
+    data_path = project_dir / "data.pkl.gz"
+    data_tmp = project_dir / "data.pkl.gz.tmp"
     lock_path = _project_lock_path(project_id)
 
     with file_lock(lock_path, exclusive=False):
-        if not state_path.exists() and not tmp_path.exists():
+        if not light_path.exists() and not light_tmp.exists():
             raise FileNotFoundError(f"项目缓存不存在：{project_id}")
 
-        state = None
-        errors = []
-
-        # 尝试主文件
-        if state_path.exists():
-            try:
-                with gzip.open(state_path, "rb") as f:
-                    state = pickle.load(f)
-            except Exception as e:
-                errors.append(f"主文件: {e}")
-
-        # 回退到临时文件
-        if state is None and tmp_path.exists():
-            try:
-                with gzip.open(tmp_path, "rb") as f:
-                    state = pickle.load(f)
-                # 用临时文件恢复主文件
-                tmp_path.replace(state_path)
-            except Exception as e:
-                errors.append(f"临时文件: {e}")
-
-        if state is None:
+        base, errors = _read_pickle_gz(light_path, light_tmp)
+        if base is None:
             raise RuntimeError(
                 f"项目缓存读取失败：{project_id}。{'；'.join(errors)}。"
                 "可尝试重新保存当前项目以覆盖损坏的缓存。"
             )
+
+        data: dict[str, Any] = {}
+        if data_path.exists() or data_tmp.exists():
+            data_obj, data_errors = _read_pickle_gz(data_path, data_tmp)
+            if data_obj is None:
+                raise RuntimeError(
+                    f"项目重数据读取失败：{project_id}。{'；'.join(data_errors)}。"
+                    "可尝试重新保存当前项目以覆盖损坏的缓存。"
+                )
+            data = data_obj if isinstance(data_obj, dict) else {}
+
+        # 重数据为权威来源，覆盖轻状态中可能存在的历史同名键
+        state = {**base, **data}
 
         metadata_path = project_dir / "metadata.json"
         metadata = {}
