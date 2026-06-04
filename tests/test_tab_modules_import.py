@@ -20,7 +20,7 @@ pytestmark = pytest.mark.unit
         ("components.tabs.upload", "render_upload_tab"),
         ("components.tabs.rules", "render_rules_tab"),
         ("components.tabs.sampling", "render_sampling_tab"),
-        ("components.tabs.analysis", "render_working_capital_main"),
+        ("components.tabs.analysis", "render_analysis_tab"),
     ],
 )
 def test_tab_module_imports(module_name: str, entry: str) -> None:
