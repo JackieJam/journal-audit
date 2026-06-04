@@ -190,6 +190,7 @@ def render_sidebar(
                 with load_col:
                     if st.button(
                         "载入",
+                        key="llm_profile_load",
                         disabled=selected_profile is None,
                         use_container_width=True,
                     ):
@@ -200,6 +201,7 @@ def render_sidebar(
                 with delete_col:
                     if st.button(
                         "删除",
+                        key="llm_profile_delete",
                         disabled=selected_profile is None,
                         use_container_width=True,
                     ):
