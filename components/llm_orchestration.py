@@ -1,22 +1,41 @@
-"""LLM 抽样建议的纯逻辑与文本渲染工具。
+"""LLM 抽样建议的逻辑、文本渲染与取数工具。
 
-承载推荐（recommendation）相关的无状态逻辑：缓存键构造、payload 记录裁剪、
-模型回传条件的归一化、模块归属判定，以及"建议抽样什么 / 当前回查逻辑"的中文文本。
-均为纯函数，不依赖 st / session / kb / LLM 调用，可直接单元测试。
+两层内容：
+1. 无状态纯函数：缓存键构造、payload 记录裁剪、模型回传条件归一化、模块归属判定，
+   以及"建议抽样什么 / 当前回查逻辑"的中文文本。可直接单元测试。
+2. 推荐 → 明细取数（detail_for_recommendation / backfill_recommendation_condition /
+   normalise_label）：读 st.session_state.year_map，并接收共享的 @st.cache_data 视图
+   缓存 build_audit_cache（仍在 app.py，因分析页签复用）作为注入参数。由 AppTest
+   基线（test_app_interaction）覆盖。
 
-注：真正驱动这些逻辑的编排器（_render_candidate_recommendations_for_module 及其
-payload / detail 构造、LLM 调用）仍在 app.py，因其深度耦合 session_state、共享的
-@st.cache_data 视图缓存、知识库持久化与配额跟踪——待专门一轮（需真跑 app 验证）再抽。
+注：真正的 UI 编排器（_render_candidate_recommendations_for_module 及其 payload 构造、
+LLM 并发调用、kb 持久化与配额跟踪）仍在 app.py，待专门一轮再抽。
 
-app.py 通过 alias 保留原调用名（_unified_llm_key 等）；其中 _unified_llm_key 仍按
-原 helper key 注入给统计概况子页签，行为零变化。
+app.py 通过 alias 保留原调用名（_unified_llm_key / _detail_for_recommendation 等）；
+其中 _unified_llm_key 按原 helper key 注入给统计概况子页签，_detail_for_recommendation
+由 functools.partial 预绑定 build_audit_cache，调用点签名与行为零变化。
 """
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from typing import Any, Callable
 
 import pandas as pd
+import streamlit as st
+
+from modules.visual_analysis import (
+    build_ap_accrual_entry_top10_from_work,
+    build_cost_focus_entries_from_work,
+    build_customer_revenue_entry_top10_from_work,
+    build_expense_entry_top10_from_work,
+    build_income_cost_abnormal_entry_top10_from_work,
+    build_monthly_revenue_cost_entry_top10_from_work,
+    build_other_payable_entry_top10_from_work,
+    build_other_receivable_entry_top10_from_work,
+    build_revenue_focus_entries_from_work,
+    build_supplier_payable_entry_top10_from_work,
+)
 
 
 def unified_llm_key(years: list[int], category: str) -> str:
@@ -221,3 +240,317 @@ def recommendation_condition_text(condition: dict[str, Any], module_filter: str)
         if kind == "profile_signal":
             return "按统计画像识别出的异常特征对应分录回查。"
     return "按模型给出的筛选条件回查对应分录。"
+
+
+# ── 推荐 → 明细数据路径（group 6 step 2）──
+# detail_for_recommendation 直接读 st.session_state.year_map，并接收共享的
+# @st.cache_data 视图缓存 build_audit_cache（仍在 app.py，因分析页签复用），
+# 由 app.py functools.partial 预绑定，调用点签名不变。
+def detail_for_recommendation(
+    condition: dict[str, Any],
+    category: str,
+    *,
+    build_audit_cache: Callable[..., dict[str, pd.DataFrame]],
+) -> pd.DataFrame:
+    condition = normalise_recommendation_condition(condition)
+    kind = str(condition.get("kind", ""))
+    year = condition.get("year")
+    if year is None:
+        return pd.DataFrame()
+    try:
+        year = int(year)
+    except (TypeError, ValueError):
+        return pd.DataFrame()
+    if year not in st.session_state.year_map:
+        return pd.DataFrame()
+    work = build_audit_cache(st.session_state.year_map[year])["work"]
+    month = condition.get("month")
+    try:
+        month = int(month) if month not in (None, "") else None
+    except (TypeError, ValueError):
+        month = None
+
+    if kind == "revenue_customer_month":
+        return build_revenue_focus_entries_from_work(
+            work,
+            customer=condition.get("customer") or None,
+            material_group=condition.get("material_group") or None,
+            month=month,
+            category=category,
+        )
+    if kind == "monthly_income_cost":
+        months = condition.get("months") or ([month] if month is not None else [])
+        if not months:
+            return pd.DataFrame()
+        metric = str(condition.get("metric") or "revenue")
+        frames = [
+            build_monthly_revenue_cost_entry_top10_from_work(
+                work,
+                month=int(m),
+                metric=metric,
+                category=category,
+            )
+            for m in months
+        ]
+        frames = [f for f in frames if not f.empty]
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if kind == "income_cost_abnormal":
+        months = condition.get("months") or ([month] if month is not None else [])
+        if not months:
+            return pd.DataFrame()
+        direction = str(condition.get("direction") or "")
+        frames = [
+            build_income_cost_abnormal_entry_top10_from_work(
+                work,
+                month=int(m),
+                direction=direction,
+                category=category,
+            )
+            for m in months
+        ]
+        frames = [f for f in frames if not f.empty]
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if kind == "customer_revenue":
+        customer = str(condition.get("customer") or "")
+        detail = build_customer_revenue_entry_top10_from_work(work, customer=customer)
+        if not detail.empty:
+            return detail
+        customer_norm = normalise_label(customer)
+        if not customer_norm:
+            return pd.DataFrame()
+        detail = work[
+            work["_acct4"].isin(["6001", "6051"])
+            & (work["_customer_display"].astype(str).map(normalise_label) == customer_norm)
+        ].copy()
+        if detail.empty:
+            return pd.DataFrame()
+        detail["收入影响"] = detail["_amount_raw"]
+        return detail.sort_values("_amount_abs", ascending=False).pipe(lambda d: d[[c for c in [
+            "凭证编号", "过账日期", "行项目", "凭证类型", "总账科目", "_account_name", "借/贷标识",
+            "公司代码货币价值", "凭证货币价值", "收入影响", "用户名", "_customer_display", "_vendor_display",
+            "_material_group_display", "_material_display", "_cost_center_display", "_header_text", "_line_text",
+            "_reversal_text"
+        ] if c in d.columns]]).rename(columns={
+            "_account_name": "科目名称", "_customer_display": "客户", "_vendor_display": "供应商",
+            "_material_group_display": "物料组", "_material_display": "物料", "_cost_center_display": "成本中心",
+            "_header_text": "凭证抬头摘要", "_line_text": "摘要", "_reversal_text": "反记账/冲销标识",
+        })
+    if kind == "revenue_customer_material":
+        return build_revenue_focus_entries_from_work(
+            work,
+            customer=condition.get("customer") or None,
+            material_group=condition.get("material_group") or None,
+            month=month,
+            category=category,
+        )
+    if kind == "cost_material_account":
+        return build_cost_focus_entries_from_work(
+            work,
+            material_group=condition.get("material_group") or None,
+            cost_account=condition.get("cost_account") or None,
+            month=month,
+            category=category,
+        )
+    if kind == "supplier_payable":
+        supplier = str(condition.get("supplier") or "")
+        detail = build_supplier_payable_entry_top10_from_work(work, supplier=supplier)
+        if not detail.empty:
+            return detail
+        supplier_norm = normalise_label(supplier)
+        if not supplier_norm:
+            return pd.DataFrame()
+        detail = work[
+            (work["_acct4"] == "2202")
+            & (work["_vendor_display"].astype(str).map(normalise_label) == supplier_norm)
+        ].copy()
+        if detail.empty:
+            return pd.DataFrame()
+        detail["应付发生额"] = detail["_amount_raw"].where(detail["_dc"] == "S", -detail["_amount_raw"])
+        detail = detail.sort_values("_amount_abs", ascending=False)
+        return detail[[
+            c for c in [
+                "凭证编号", "过账日期", "行项目", "凭证类型", "总账科目", "_account_name", "借/贷标识",
+                "公司代码货币价值", "凭证货币价值", "应付发生额", "用户名", "_customer_display", "_vendor_display",
+                "_material_group_display", "_material_display", "_cost_center_display", "_header_text", "_line_text",
+                "_reversal_text"
+            ] if c in detail.columns
+        ]].rename(columns={
+            "_account_name": "科目名称", "_customer_display": "客户", "_vendor_display": "供应商",
+            "_material_group_display": "物料组", "_material_display": "物料", "_cost_center_display": "成本中心",
+            "_header_text": "凭证抬头摘要", "_line_text": "摘要", "_reversal_text": "反记账/冲销标识",
+        })
+    if kind == "expense_category":
+        expense_category = str(condition.get("expense_category") or "")
+        if not expense_category:
+            return pd.DataFrame()
+        return build_expense_entry_top10_from_work(work, expense_category)
+    if kind == "ap_accrual_month":
+        if month is None:
+            return pd.DataFrame()
+        direction = str(condition.get("direction") or "net")
+        return build_ap_accrual_entry_top10_from_work(work, month=month, direction=direction)
+    if kind == "ap_accrual_supplier":
+        if month is None:
+            return pd.DataFrame()
+        return build_ap_accrual_entry_top10_from_work(
+            work,
+            month=month,
+            direction=str(condition.get("direction") or "net"),
+            supplier=str(condition.get("supplier") or ""),
+        )
+    if kind == "other_receivable_month":
+        if month is None:
+            return pd.DataFrame()
+        return build_other_receivable_entry_top10_from_work(
+            work,
+            month=month,
+            direction=str(condition.get("direction") or "net"),
+        )
+    if kind == "other_payable_month":
+        if month is None:
+            return pd.DataFrame()
+        return build_other_payable_entry_top10_from_work(
+            work,
+            month=month,
+            direction=str(condition.get("direction") or "net"),
+        )
+    if kind == "adjustment_voucher":
+        voucher_id = str(condition.get("voucher_id") or "")
+        if not voucher_id:
+            return pd.DataFrame()
+        return work.loc[work["凭证编号"].astype(str) == voucher_id].copy()
+
+    if kind == "cross_year_finding":
+        years_list = condition.get("years") or [year]
+        cat = str(condition.get("category") or "")
+        cat_lower = cat.lower()
+        # 匹配跨年稽核发现中的关键词
+        keyword_map = {
+            "预提": ["预提", "计提", "accrual"],
+            "收入": ["收入", "revenue"],
+            "突增": ["突增", "surge", "spike"],
+            "年末": ["年末", "year.end", "december"],
+            "冲回": ["冲回", "冲销", "reversal"],
+        }
+        keywords = []
+        for kw_group, kws in keyword_map.items():
+            if any(k in cat_lower for k in kws):
+                keywords.extend(kws)
+        if not keywords:
+            keywords = [cat]
+        frames = []
+        for y in years_list:
+            try:
+                y = int(y)
+            except (TypeError, ValueError):
+                continue
+            if y in st.session_state.year_map:
+                y_work = build_audit_cache(st.session_state.year_map[y])["work"]
+                mask = pd.Series(False, index=y_work.index)
+                for kw in keywords:
+                    if "文本" in y_work.columns:
+                        mask |= y_work["文本"].astype(str).str.contains(kw, case=False, na=False)
+                if mask.any():
+                    frames.append(y_work[mask].copy())
+        if frames:
+            return pd.concat(frames, ignore_index=True)
+        # fallback: 返回对应年份的数据
+        for y in years_list:
+            try:
+                y = int(y)
+            except (TypeError, ValueError):
+                continue
+            if y in st.session_state.year_map:
+                return build_audit_cache(st.session_state.year_map[y])["work"].head(50).copy()
+        return pd.DataFrame()
+
+    if kind == "profile_signal":
+        signal = str(condition.get("signal") or condition.get("category") or "")
+        signal_lower = signal.lower()
+        # 匹配统计画像信号关键词
+        if any(k in signal_lower for k in ["假日", "周末", "weekend", "holiday"]):
+            mask = (work["_dow"] >= 5) if "_dow" in work.columns else pd.Series(False, index=work.index)
+        elif any(k in signal_lower for k in ["月末", "month.end", "period.end", "年底", "年末"]):
+            mask = (work["_is_month_end"]) if "_is_month_end" in work.columns else pd.Series(False, index=work.index)
+        elif any(k in signal_lower for k in ["用户", "user", "concentration", "集中"]):
+            top_users = work["用户名"].value_counts().head(5).index.tolist() if "用户名" in work.columns else []
+            mask = work["用户名"].isin(top_users) if top_users else pd.Series(False, index=work.index)
+        elif any(k in signal_lower for k in ["大额", "large", "整数", "round"]):
+            amt_threshold = 1e6
+            if "_amount_abs" in work.columns:
+                mask = work["_amount_abs"] >= amt_threshold
+            else:
+                mask = pd.Series(False, index=work.index)
+        elif any(k in signal_lower for k in ["冲销", "reversal", "反记账", "调账"]):
+            mask = work["_reversal_text"].astype(str).str.strip() != "" if "_reversal_text" in work.columns else pd.Series(False, index=work.index)
+        else:
+            # 默认返回当前年份金额最大的凭证
+            if "_amount_abs" in work.columns:
+                return work.nlargest(min(50, len(work)), "_amount_abs").copy()
+            return work.head(50).copy()
+        if mask.any():
+            return work[mask].head(100).copy()
+        return work.head(50).copy()
+
+    return pd.DataFrame()
+
+
+def normalise_label(value: str) -> str:
+    return str(value or "").strip().replace(" ", "").replace("\n", "").replace("\t", "")
+
+
+def backfill_recommendation_condition(
+    rec: dict[str, Any],
+    category: str,
+    module_filter: str,
+) -> dict[str, Any]:
+    condition = normalise_recommendation_condition(rec.get("condition") or {})
+    title = str(rec.get("title") or "")
+    reason = str(rec.get("reason") or "")
+    text = f"{title}\n{reason}"
+
+    if module_filter == "收入成本":
+        if not condition.get("kind"):
+            customer_match = re.search(r"客户([A-Za-z0-9_\\-\\s\\u4e00-\\u9fff（）()]+?)收入", text)
+            if customer_match:
+                condition["kind"] = "customer_revenue"
+                condition["customer"] = customer_match.group(1).strip()
+        if not condition.get("year"):
+            year_match = re.search(r"(20\\d{2})年", text)
+            if year_match:
+                condition["year"] = int(year_match.group(1))
+        if not condition.get("kind") and "毛利" in text:
+            months = [int(m) for m in re.findall(r"(\\d{1,2})月", text)]
+            if months:
+                condition["kind"] = "monthly_income_cost"
+                condition["metric"] = "gross"
+                condition["month"] = months[0]
+                condition["months"] = months
+        if not condition.get("kind") and "供应商" in text:
+            supplier_match = re.search(r"供应商([A-Za-z0-9_\\-\\s\\u4e00-\\u9fff（）()]+?)(应付|暂估|收入|成本)", text)
+            if supplier_match:
+                condition["kind"] = "supplier_payable"
+                condition["supplier"] = supplier_match.group(1).strip()
+    elif module_filter == "费用":
+        if not condition.get("kind"):
+            expense_match = re.search(r"费用类别\\s*([A-Za-z0-9_\\-\\s\\u4e00-\\u9fff（）()]+)", text)
+            if expense_match:
+                condition["kind"] = "expense_category"
+                condition["expense_category"] = expense_match.group(1).strip()
+
+    elif module_filter == "跨年交叉稽核":
+        if not condition.get("kind"):
+            condition["kind"] = "cross_year_finding"
+        if not condition.get("category"):
+            condition["category"] = title
+        if not condition.get("years"):
+            years_found = sorted(set(int(y) for y in re.findall(r"(20\d{2})", text)))
+            condition["years"] = years_found if years_found else list(st.session_state.year_map.keys())
+    elif module_filter == "统计画像":
+        if not condition.get("kind"):
+            condition["kind"] = "profile_signal"
+        if not condition.get("signal"):
+            condition["signal"] = title
+        if not condition.get("year") and st.session_state.year_map:
+            condition["year"] = max(st.session_state.year_map.keys())
+    return normalise_recommendation_condition(condition)
