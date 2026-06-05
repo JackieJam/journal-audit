@@ -125,3 +125,43 @@ def test_recommendation_add_to_pool(isolated_app_home, sample_data):
     assert _click(at, "一键全部加入疑点库"), "未找到「一键全部加入疑点库」按钮"
     assert not at.exception
     assert at.session_state["candidate_pool"], "建议未写入候选池，编排器取数链路可能回归"
+
+
+# ── LLM 真实生成路径基线 ──
+# 上面两条只覆盖「已有缓存结果时渲染 + 入库」（seed audit_llm_analysis 绕开了生成）。
+# 本条点「智能分析」按钮，真正走 _generate_recommendations：拼 overview/各模块 payload
+# → 并发调 generate_overview_analysis / generate_module_recommendations → 回填缓存 →
+# autosave。两个 LLM 调用 mock 在**源模块** modules.audit_llm_analysis 上（app.py 与
+# 后续抽出的 components/llm_orchestration.py 都从该模块取函数；模块侧用限定调用，故
+# patch 在编排器迁移前后均生效），不触碰真实网络。为把编排器抽到模块兜住生成段。
+
+
+def _fake_overview_analysis(*args, **kwargs) -> dict:
+    return {"summary": "mock overview", "analysis_scope": "overview"}
+
+
+def _fake_module_recommendations(*args, **kwargs) -> dict:
+    if kwargs.get("module_name") == "收入成本":
+        return {"recommendations": [dict(_SEEDED_RECOMMENDATION)]}
+    return {"recommendations": []}
+
+
+def test_recommendation_generate_path(isolated_app_home, sample_data, monkeypatch):
+    """点「智能分析」应跑通生成编排（mock LLM 调用）并把结果回填到 audit_llm_analysis。"""
+    import modules.audit_llm_analysis as ala
+
+    monkeypatch.setattr(ala, "generate_overview_analysis", _fake_overview_analysis)
+    monkeypatch.setattr(ala, "generate_module_recommendations", _fake_module_recommendations)
+
+    # 生成按钮（show_controls=True）在「财务概况」顶层页签，不在可疑样本库筛选内层。
+    at = _load(
+        sample_data,
+        "序时账分析",
+        _manual_api_key="test-key",
+        _sub_tab_top_name="财务概况",
+    )
+    assert _click(at, "智能分析"), "未找到「智能分析」按钮"
+    assert not at.exception
+    result = at.session_state["audit_llm_analysis"].get(_SEEDED_UNIFIED_KEY)
+    assert result, "生成结果未回填到 audit_llm_analysis"
+    assert result.get("module_recommendations", {}).get("收入成本"), "收入成本模块建议缺失"
