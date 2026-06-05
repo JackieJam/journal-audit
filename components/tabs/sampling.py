@@ -161,7 +161,7 @@ def render_sampling_tab(main_tab=None, **helpers):
 
     st.divider()
 
-    if st.button("🚀 执行样本抽取", type="primary", use_container_width=True):
+    if st.button("🚀 执行样本抽取", type="primary", width="stretch"):
         if rule_source == "calibrated_rules" and st.session_state.rules_config:
             cfg = st.session_state.rules_config
         else:
@@ -276,7 +276,7 @@ def render_sampling_tab(main_tab=None, **helpers):
             display_df["贷方金额"] = display_df["贷方金额"] / 1e4
             st.dataframe(
                 display_df,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "凭证编号": st.column_config.TextColumn("凭证编号"),
@@ -296,15 +296,15 @@ def render_sampling_tab(main_tab=None, **helpers):
             c1, c2 = st.columns([1, 1.5])
             with c1:
                 st.markdown("##### 规则命中摘要")
-                st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(summary_data), width="stretch", hide_index=True)
                 total_hits = sum(r.count for r in results)
                 total_vouchers = len({h.voucher_id for r in results for h in r.hits})
                 st.info(f"💡 规则共命中 **{total_hits}** 行分录，涉及 **{total_vouchers}** 个凭证。")
             with c2:
-                st.plotly_chart(rule_hit_bar(summary_data), use_container_width=True)
+                st.plotly_chart(rule_hit_bar(summary_data), width="stretch")
 
             if st.session_state.llm_judgments:
-                st.plotly_chart(risk_level_pie(st.session_state.llm_judgments), use_container_width=True)
+                st.plotly_chart(risk_level_pie(st.session_state.llm_judgments), width="stretch")
 
     st.divider()
     st.subheader("📄 报告下载")
@@ -362,12 +362,12 @@ def render_sampling_tab(main_tab=None, **helpers):
                 file_name=Path(report_path).name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
-                use_container_width=True
+                width="stretch"
             )
 
     st.divider()
 
     # 重置，开始新项目
-    if st.button("🔄 开始新审计项目", use_container_width=True):
+    if st.button("🔄 开始新审计项目", width="stretch"):
         _reset_current_project()
         st.rerun()

@@ -36,7 +36,7 @@ def render_overview(*, financials: dict[int, Any], helpers: dict[str, Any]) -> N
         if len(financials) >= 1:
             st.plotly_chart(
                 multi_year_financial_overview(financials),
-                use_container_width=True,
+                width="stretch",
                 key="multi_year_financial_overview",
             )
 
@@ -87,7 +87,7 @@ def render_overview(*, financials: dict[int, Any], helpers: dict[str, Any]) -> N
                 })
             st.dataframe(
                 pd.DataFrame(summary_rows),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "总收入": st.column_config.NumberColumn("总收入(万)", format="%,.1f"),

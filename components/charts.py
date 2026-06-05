@@ -1,7 +1,7 @@
 """
 Plotly 图表组件库，供 Streamlit 页面调用。
 所有函数返回 plotly.graph_objects.Figure 或 plotly.express Figure，
-Streamlit 用 st.plotly_chart(fig, use_container_width=True) 渲染。
+Streamlit 用 st.plotly_chart(fig, width="stretch") 渲染。
 """
 
 from __future__ import annotations

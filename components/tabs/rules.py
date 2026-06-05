@@ -56,7 +56,7 @@ def render_rules_tab(main_tab, **helpers):
     # ── 顶部操作栏 ──
     col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 0.6, 0.4])
     with col1:
-        if st.button("🚀 智能校准（LLM 分析画像后自动设参）", disabled=not _can_use_llm(), use_container_width=True):
+        if st.button("🚀 智能校准（LLM 分析画像后自动设参）", disabled=not _can_use_llm(), width="stretch"):
             with st.spinner("LLM 正在分析画像特征并校准阈值..."):
                 try:
                     lib_rules = kb.get_recommendations("", top_n=8)
@@ -80,7 +80,7 @@ def render_rules_tab(main_tab, **helpers):
                 except Exception as e:
                     st.error(f"校准失败：{e}")
     with col2:
-        if st.button("🔄 恢复全部默认", use_container_width=True):
+        if st.button("🔄 恢复全部默认", width="stretch"):
             st.session_state.rules_config = base_cfg.copy()
             st.session_state.custom_rule_keys = []
             st.session_state.custom_rule_counter = 0
@@ -97,7 +97,7 @@ def render_rules_tab(main_tab, **helpers):
     with col4:
         st.metric("样本上限", cfg.get("max_sample_size", 50))
     with col5:
-        with st.popover("＋", use_container_width=True):
+        with st.popover("＋", width="stretch"):
             _render_create_rule_form(base_cfg)
 
     # ── 白名单 & 全局设置 ──
@@ -159,7 +159,7 @@ def render_rules_tab(main_tab, **helpers):
             })
         st.dataframe(
             pd.DataFrame(lib_rows),
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
             column_config={
                 "规则名称": st.column_config.TextColumn("规则名称", width="medium"),
                 "类别": st.column_config.TextColumn("类别", width="small"),
@@ -210,7 +210,7 @@ def render_rules_tab(main_tab, **helpers):
                 engagement = st.session_state.get("engagement_name", "unnamed")
                 notes = st.text_input("项目备注", placeholder="如：SAP系统，制造业，存在大量暂估入账",
                                       key="lib_notes")
-                if st.button("💾 保存选中规则到经验库", use_container_width=True, key="btn_save_lib"):
+                if st.button("💾 保存选中规则到经验库", width="stretch", key="btn_save_lib"):
                     saved_count = 0
                     cfg = st.session_state.rules_config or {}
                     for rule_name, hits_n, confirmed_n in rules_to_save:
@@ -257,7 +257,7 @@ def _render_rule_popover(rule_key: str, base_cfg: dict, is_builtin: bool = True)
     icon = "✅" if enabled else "⬜"
     label = f"{icon} {title}{suffix}"
 
-    with st.popover(label, use_container_width=True):
+    with st.popover(label, width="stretch"):
         # 头部：启用 + 删除
         c_en, c_del = st.columns([3, 1])
         with c_en:
@@ -297,17 +297,17 @@ def _render_rule_popover(rule_key: str, base_cfg: dict, is_builtin: bool = True)
         b1, b2 = st.columns(2)
         with b1:
             if is_builtin and base_cfg.get(rule_key):
-                if st.button("↩ 恢复默认", key=f"rule3_reset_{rule_key}", use_container_width=True):
+                if st.button("↩ 恢复默认", key=f"rule3_reset_{rule_key}", width="stretch"):
                     cfg[rule_key] = base_cfg[rule_key].copy()
                     st.success(f"「{title}」已恢复默认。")
                     st.rerun()
             else:
-                if st.button("📋 克隆", key=f"rule3_clone_{rule_key}", use_container_width=True):
+                if st.button("📋 克隆", key=f"rule3_clone_{rule_key}", width="stretch"):
                     _clone_rule(rule_key)
                     st.rerun()
         with b2:
             if not is_builtin:
-                if st.button("🗑️ 删除", key=f"rule3_del2_{rule_key}", use_container_width=True):
+                if st.button("🗑️ 删除", key=f"rule3_del2_{rule_key}", width="stretch"):
                     _delete_rule(rule_key, title)
                     st.rerun()
 
@@ -339,7 +339,7 @@ def _render_rule_card_v2(rule_key: str, base_cfg: dict, is_builtin: bool = True)
                 st.rerun()
         with c_actions:
             if not is_builtin:
-                if st.button("🗑️ 删除", key=f"rule2_del_{rule_key}", use_container_width=True):
+                if st.button("🗑️ 删除", key=f"rule2_del_{rule_key}", width="stretch"):
                     _delete_rule(rule_key, title)
                     st.rerun()
 
@@ -373,17 +373,17 @@ def _render_rule_card_v2(rule_key: str, base_cfg: dict, is_builtin: bool = True)
         b1, b2 = st.columns(2)
         with b1:
             if is_builtin and base_rule:
-                if st.button(f"↩ 恢复默认", key=f"rule2_reset_{rule_key}", use_container_width=True):
+                if st.button(f"↩ 恢复默认", key=f"rule2_reset_{rule_key}", width="stretch"):
                     cfg[rule_key] = base_rule.copy()
                     st.success(f"「{title}」已恢复默认参数。")
                     st.rerun()
             else:
-                if st.button(f"📋 克隆", key=f"rule2_clone_{rule_key}", use_container_width=True):
+                if st.button(f"📋 克隆", key=f"rule2_clone_{rule_key}", width="stretch"):
                     _clone_rule(rule_key)
                     st.rerun()
         with b2:
             if not is_builtin:
-                if st.button(f"🗑️ 删除规则", key=f"rule2_del2_{rule_key}", use_container_width=True):
+                if st.button(f"🗑️ 删除规则", key=f"rule2_del2_{rule_key}", width="stretch"):
                     _delete_rule(rule_key, title)
                     st.rerun()
 
@@ -412,7 +412,7 @@ def _render_rule_card(rule_key: str, base_cfg: dict, is_builtin: bool = True):
 
     with c_actions:
         if not is_builtin:
-            if st.button("🗑️", key=f"rule_del_{rule_key}", help=f"删除 {title}", use_container_width=True):
+            if st.button("🗑️", key=f"rule_del_{rule_key}", help=f"删除 {title}", width="stretch"):
                 _delete_rule(rule_key, title)
                 st.rerun()
 
@@ -440,17 +440,17 @@ def _render_rule_card(rule_key: str, base_cfg: dict, is_builtin: bool = True):
         b1, b2 = st.columns(2)
         with b1:
             if is_builtin and base_rule:
-                if st.button(f"↩ 恢复 {title} 默认", key=f"rule_reset_{rule_key}", use_container_width=True):
+                if st.button(f"↩ 恢复 {title} 默认", key=f"rule_reset_{rule_key}", width="stretch"):
                     cfg[rule_key] = base_rule.copy()
                     st.success(f"{title} 已恢复默认。")
                     st.rerun()
             else:
-                if st.button(f"📋 克隆 {title}", key=f"rule_clone_{rule_key}", use_container_width=True):
+                if st.button(f"📋 克隆 {title}", key=f"rule_clone_{rule_key}", width="stretch"):
                     _clone_rule(rule_key)
                     st.rerun()
         with b2:
             if not is_builtin:
-                if st.button(f"🗑️ 删除 {title}", key=f"rule_del2_{rule_key}", use_container_width=True):
+                if st.button(f"🗑️ 删除 {title}", key=f"rule_del2_{rule_key}", width="stretch"):
                     _delete_rule(rule_key, title)
                     st.rerun()
 
@@ -594,7 +594,7 @@ def _render_create_rule_form(base_cfg: dict):
         st.caption(f"基础模板: **{RULE_META.get(base_rule_type, {}).get('title', base_rule_type)}**")
         st.caption(f"审计目的: {RULE_META.get(base_rule_type, {}).get('purpose', '')}")
 
-    if st.button("➕ 创建规则", type="primary", use_container_width=True, key="btn_create_rule"):
+    if st.button("➕ 创建规则", type="primary", width="stretch", key="btn_create_rule"):
         if not custom_name.strip():
             st.warning("请输入规则名称。")
             return

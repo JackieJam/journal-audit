@@ -130,14 +130,14 @@ def _render_mapping_stage(
             }
             for file in uploaded
         ]
-        st.dataframe(pd.DataFrame(file_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(file_rows), width="stretch", hide_index=True)
 
         st.caption(f"探测到源文件共 **{len(detection.source_columns)}** 列")
         with st.expander("查看源文件全部列名", expanded=False):
             st.write("、".join(detection.source_columns) or "（空）")
         if not detection.sample.empty:
             with st.expander("源文件前 5 行预览", expanded=False):
-                st.dataframe(detection.sample.head(), use_container_width=True, hide_index=True)
+                st.dataframe(detection.sample.head(), width="stretch", hide_index=True)
 
     with col_right:
         st.subheader("列名映射确认")
@@ -151,14 +151,14 @@ def _render_mapping_stage(
 
         action_col1, action_col2 = st.columns(2)
         with action_col1:
-            if st.button("重置为自动建议", use_container_width=True, key=f"reset_map_{file_signature}"):
+            if st.button("重置为自动建议", width="stretch", key=f"reset_map_{file_signature}"):
                 st.session_state[mapping_state_key] = dict(detection.suggested_mapping)
                 # 同步清空各 selectbox 的状态
                 for std in STANDARD_COLUMNS:
                     st.session_state.pop(f"map_{file_signature}_{std.name}", None)
                 st.rerun()
         with action_col2:
-            if st.button("全部清空（除核心）", use_container_width=True, key=f"clear_map_{file_signature}"):
+            if st.button("全部清空（除核心）", width="stretch", key=f"clear_map_{file_signature}"):
                 for std in STANDARD_COLUMNS:
                     if std.tier != "core":
                         st.session_state[mapping_state_key].pop(std.name, None)
@@ -171,7 +171,7 @@ def _render_mapping_stage(
         if st.button(
             "开始解析数据",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             key=f"parse_{file_signature}",
         ):
             _run_parse(
@@ -311,7 +311,7 @@ def _render_loaded_summary() -> None:
     st.success(f"成功识别到 **{len(year_map)}** 个年度的数据")
 
     df_summary = pd.DataFrame(summary)
-    st.dataframe(df_summary, use_container_width=True, hide_index=True)
+    st.dataframe(df_summary, width="stretch", hide_index=True)
 
     missing = st.session_state.get("missing_columns", []) or []
     important_missing = [
@@ -327,7 +327,7 @@ def _render_loaded_summary() -> None:
 
     _render_account_config_section()
 
-    if st.button("确认识别结果，进入分析页", type="primary", use_container_width=True):
+    if st.button("确认识别结果，进入分析页", type="primary", width="stretch"):
         # 走 _pending_tab 中转：下次 rerun 在 segmented_control 实例化前写入其 key。
         st.session_state["_pending_tab"] = 1
         st.rerun()
@@ -372,7 +372,7 @@ def _render_account_config_section() -> None:
 
         edited = st.data_editor(
             editor_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             num_rows="fixed",
             disabled=["科目编号", "科目名称", "行数", "金额(亿)", "自动分类"],
@@ -396,7 +396,7 @@ def _render_account_config_section() -> None:
 
         col1, col2 = st.columns([1, 1])
         with col1:
-            if st.button("应用分类", type="primary", use_container_width=True, key="apply_account_classifier"):
+            if st.button("应用分类", type="primary", width="stretch", key="apply_account_classifier"):
                 new_overrides: dict[str, str] = {}
                 for _, row in edited.iterrows():
                     code = str(row["科目编号"]).strip()
@@ -414,7 +414,7 @@ def _render_account_config_section() -> None:
                 st.success(f"已保存 {len(new_overrides)} 项人工分类。请进入「序时账分析」重新生成画像。")
                 st.rerun()
         with col2:
-            if st.button("清空人工分类", use_container_width=True, key="reset_account_classifier"):
+            if st.button("清空人工分类", width="stretch", key="reset_account_classifier"):
                 st.session_state.account_category_overrides = {}
                 st.session_state.pop("account_classifier_editor", None)
                 _clear_analysis_cache()

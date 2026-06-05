@@ -37,7 +37,7 @@ def render_working_capital_main(
     ap_accrual_monthly = audit_cache["ap_accrual"]
     ap_accrual_event = st.plotly_chart(
         ap_accrual_monthly_chart(ap_accrual_monthly, audit_year_sel),
-        use_container_width=True,
+        width="stretch",
         key=f"ap_accrual_monthly_chart_{audit_year_sel}",
         on_select="rerun",
         selection_mode="points",
@@ -78,7 +78,7 @@ def render_working_capital_main(
                 ap_share,
                 f"{audit_year_sel}年{ap_month}月 应付账款暂估供应商对比（按{direction_label}排序）",
             ),
-            use_container_width=True,
+            width="stretch",
             key=f"ap_accrual_supplier_chart_{audit_year_sel}_{ap_month}_{ap_direction}",
             on_select="rerun",
             selection_mode="points",
@@ -130,7 +130,7 @@ def render_working_capital_main(
             ap_share_display[ap_ratio_cols] = ap_share_display[ap_ratio_cols] * 100
         st.dataframe(
             ap_share_display,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "暂估贷方增加": st.column_config.NumberColumn("暂估贷方增加", format="%,.1f 万"),
@@ -145,7 +145,7 @@ def render_working_capital_main(
     other_receivable_monthly = audit_cache["other_receivable"]
     other_receivable_event = st.plotly_chart(
         other_receivable_monthly_chart(other_receivable_monthly, audit_year_sel),
-        use_container_width=True,
+        width="stretch",
         key=f"other_receivable_monthly_chart_{audit_year_sel}",
         on_select="rerun",
         selection_mode="points",
@@ -196,7 +196,7 @@ def render_working_capital_main(
             )
         st.dataframe(
             other_receivable_display,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "其他应收S发生额": st.column_config.NumberColumn("其他应收S发生额", format="%,.1f 万"),
@@ -208,7 +208,7 @@ def render_working_capital_main(
     other_payable_monthly = audit_cache["other_payable"]
     other_payable_event = st.plotly_chart(
         other_payable_monthly_chart(other_payable_monthly, audit_year_sel),
-        use_container_width=True,
+        width="stretch",
         key=f"other_payable_monthly_chart_{audit_year_sel}",
         on_select="rerun",
         selection_mode="points",
@@ -259,7 +259,7 @@ def render_working_capital_main(
             )
         st.dataframe(
             other_payable_display,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "其他应付预提H": st.column_config.NumberColumn("其他应付预提H", format="%,.1f 万"),

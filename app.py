@@ -949,7 +949,7 @@ def _render_candidate_add_popover(
     if detail.empty:
         return
     stats = _detail_metrics(detail)
-    with st.popover("加入疑点库", use_container_width=True):
+    with st.popover("加入疑点库", width="stretch"):
         st.caption(
             f"将按当前条件加入全量匹配分录：{stats['rows']:,} 行，"
             f"{stats['vouchers']:,} 个凭证，金额绝对值合计 {_format_money(stats['amount'])}。"
@@ -963,7 +963,7 @@ def _render_candidate_add_popover(
         )
         reason = st.text_area("入库理由", value=default_reason, key=f"{key}_reason", height=90)
         manual_final = st.checkbox("同时标记为人工直入最终样本", key=f"{key}_manual_final")
-        if st.button("确认加入", type="primary", use_container_width=True, key=f"{key}_add"):
+        if st.button("确认加入", type="primary", width="stretch", key=f"{key}_add"):
             _save_candidate_group(
                 title=title,
                 source_module=source_module,
@@ -1054,7 +1054,7 @@ def _render_chart_title_with_download(
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key=key,
                 help="下载当前图表对应的 Excel",
-                use_container_width=True,
+                width="stretch",
             )
 
 
@@ -1215,7 +1215,7 @@ def _render_cross_year_finding(finding: Any) -> None:
     st.caption(f"关注点：{_cross_year_focus_text(finding.category)}")
     st.dataframe(
         pd.DataFrame(_cross_year_evidence_rows(finding)),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     voucher_ids = _plain_value(getattr(finding, "voucher_ids", []) or [])
@@ -1505,7 +1505,7 @@ def _render_focused_voucher_detail(
     st.caption(f"已定位到 {len(voucher_detail)} 行完整分录{extra_note}。")
     st.dataframe(
         voucher_detail,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config=_amount_column_config(amount_cols),
     )
@@ -1834,17 +1834,17 @@ def _render_detail_with_actions(
 
     with filter_col2:
         if threshold > 0:
-            if st.button(f"✓ 选择 {amount_sel}", type="primary", use_container_width=True, key=f"{key}_apply_filter"):
+            if st.button(f"✓ 选择 {amount_sel}", type="primary", width="stretch", key=f"{key}_apply_filter"):
                 st.session_state[sel_state_key] = list(eligible_vids)
                 _reset_editor_state(key)
                 st.rerun()
         else:
-            if st.button("✓ 全选", use_container_width=True, key=f"{key}_select_all"):
+            if st.button("✓ 全选", width="stretch", key=f"{key}_select_all"):
                 st.session_state[sel_state_key] = detail["凭证编号"].astype(str).unique().tolist()
                 _reset_editor_state(key)
                 st.rerun()
     with filter_col3:
-        if st.button("✗ 清空", use_container_width=True, key=f"{key}_clear_sel"):
+        if st.button("✗ 清空", width="stretch", key=f"{key}_clear_sel"):
             st.session_state[sel_state_key] = []
             _reset_editor_state(key)
             st.rerun()
@@ -1905,7 +1905,7 @@ def _render_detail_with_actions(
     detail_event = st.dataframe(
         styled_detail,
         key=f"{key}_detail_table",
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         height=min(520, 90 + max(len(display_detail), 1) * 35),
         column_order=visible_columns,
@@ -1937,13 +1937,13 @@ def _render_detail_with_actions(
     )
     col_add, col_final = st.columns(2)
     with col_add:
-        with st.popover("📥 批量加入疑点库", use_container_width=True, disabled=not current_selected):
+        with st.popover("📥 批量加入疑点库", width="stretch", disabled=not current_selected):
             tags_add = st.multiselect("风险标签", key=f"{key}_pop_add_tags",
                 options=sorted(set(CANDIDATE_TAG_OPTIONS + (default_tags or []))),
                 default=default_tags or [])
             reason_add = st.text_area("入库理由", key=f"{key}_pop_add_reason",
                 value=default_reason, height=60)
-            if st.button("确认加入", type="primary", use_container_width=True, key=f"{key}_pop_add_btn",
+            if st.button("确认加入", type="primary", width="stretch", key=f"{key}_pop_add_btn",
                           disabled=not current_selected):
                 batch_detail = df_source[df_source["凭证编号"].astype(str).isin(current_selected)]
                 _save_candidate_group(
@@ -1955,13 +1955,13 @@ def _render_detail_with_actions(
                 st.success(f"已批量加入 {len(current_selected)} 个凭证到疑点库。")
                 st.rerun(scope="app")
     with col_final:
-        with st.popover("🚀 批量直入最终样本", use_container_width=True, disabled=not current_selected):
+        with st.popover("🚀 批量直入最终样本", width="stretch", disabled=not current_selected):
             tags_final = st.multiselect("风险标签", key=f"{key}_pop_final_tags",
                 options=sorted(set(CANDIDATE_TAG_OPTIONS + (default_tags or []))),
                 default=default_tags or [])
             reason_final = st.text_area("入库理由", key=f"{key}_pop_final_reason",
                 value=default_reason, height=60)
-            if st.button("确认直入", use_container_width=True, key=f"{key}_pop_final_btn",
+            if st.button("确认直入", width="stretch", key=f"{key}_pop_final_btn",
                           disabled=not current_selected):
                 batch_detail = df_source[df_source["凭证编号"].astype(str).isin(current_selected)]
                 _save_candidate_group(
@@ -2830,14 +2830,14 @@ def _render_candidate_recommendations_for_module(
         generate_col, auto_add_col = st.columns(2)
         btn_label = "智能分析" if not unified_cached else "刷新智能分析"
         with generate_col:
-            if st.button(btn_label, disabled=not _can_use_llm(), type="primary", use_container_width=True):
+            if st.button(btn_label, disabled=not _can_use_llm(), type="primary", width="stretch"):
                 try:
                     _generate_recommendations(auto_add_all=False)
                 except Exception as e:
                     st.error(f"生成模型建议失败：{e}")
         with auto_add_col:
             add_disabled = not unified_cached or not _can_use_llm()
-            if st.button("一键加入疑点库", disabled=add_disabled, use_container_width=True, key=f"gen_add_all_llm_{unified_key}"):
+            if st.button("一键加入疑点库", disabled=add_disabled, width="stretch", key=f"gen_add_all_llm_{unified_key}"):
                 try:
                     recommendations = list(
                         (unified_cached or {}).get("module_recommendations", {}).get(module_filter, [])
@@ -2875,7 +2875,7 @@ def _render_candidate_recommendations_for_module(
 
     all_col = st.columns(1)[0]
     with all_col:
-        if st.button("一键全部加入疑点库", use_container_width=True, key=f"add_all_llm_rec_{unified_key}_{module_filter}"):
+        if st.button("一键全部加入疑点库", width="stretch", key=f"add_all_llm_rec_{unified_key}_{module_filter}"):
             added, skipped = _add_recommendations([(idx, rec, False) for idx, rec in enumerate(filtered_recommendations)])
             if added:
                 st.success(f"已加入 {added} 条模型建议。{f'跳过 {skipped} 条无匹配明细建议。' if skipped else ''}")
@@ -2918,7 +2918,7 @@ def _render_candidate_recommendations_for_module(
                 with action_col1:
                     if st.button(
                         "加入疑点库",
-                        use_container_width=True,
+                        width="stretch",
                         key=f"llm_rec_add_{unified_key}_{module_filter}_{idx}",
                         type="primary",
                     ):
@@ -2931,7 +2931,7 @@ def _render_candidate_recommendations_for_module(
                 with action_col2:
                     if st.button(
                         "直入最终样本",
-                        use_container_width=True,
+                        width="stretch",
                         key=f"llm_rec_final_add_{unified_key}_{module_filter}_{idx}",
                     ):
                         added, skipped = _add_recommendations([(idx, rec, True)])
@@ -3006,7 +3006,7 @@ def _render_missing_columns_banner() -> None:
             {"缺失字段": col, "受影响的分析": "、".join(_COLUMN_IMPACT_MAP[col])}
             for col in relevant
         ]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
         st.caption("如需补齐，请回到「上传数据」页签重新映射列。")
 
 # 暴露经验库/配置加载告警（损坏文件不再被静默吞掉，符合「风险可见」）

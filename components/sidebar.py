@@ -68,7 +68,7 @@ def render_sidebar(
         st.caption(f"隔离命名空间：{storage_namespace_label()}")
 
         save_disabled = not st.session_state.engagement_name
-        if st.button("保存当前项目", disabled=save_disabled, use_container_width=True):
+        if st.button("保存当前项目", disabled=save_disabled, width="stretch"):
             try:
                 ok, message = _save_current_project_state()
                 if ok:
@@ -97,7 +97,7 @@ def render_sidebar(
                 )
                 open_col, delete_col = st.columns(2)
                 with open_col:
-                    if st.button("载入", use_container_width=True):
+                    if st.button("载入", width="stretch"):
                         try:
                             metadata = _restore_project_state(project_labels[selected_project_label])
                             st.success(f"已载入：{metadata.get('project_name', '项目')}")
@@ -107,7 +107,7 @@ def render_sidebar(
 
                 delete_confirmed = st.checkbox("确认删除所选历史项目", key="confirm_delete_project")
                 with delete_col:
-                    if st.button("删除", disabled=not delete_confirmed, use_container_width=True):
+                    if st.button("删除", disabled=not delete_confirmed, width="stretch"):
                         project_id = project_labels[selected_project_label]
                         project_name = selected_project_label.split(" | ")[0]
                         try:
@@ -143,7 +143,7 @@ def render_sidebar(
                 discard_confirmed = st.checkbox("确认切换到空白项目", key="confirm_new_blank_project")
             
             create_disabled = not new_project_name_clean or name_conflict or (has_current_work and not discard_confirmed)
-            if st.button("创建项目", disabled=create_disabled, use_container_width=True):
+            if st.button("创建项目", disabled=create_disabled, width="stretch"):
                 try:
                     ok, message = _create_blank_project(new_project_name_clean)
                     if ok:
@@ -192,7 +192,7 @@ def render_sidebar(
                         "载入",
                         key="llm_profile_load",
                         disabled=selected_profile is None,
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         _save_llm_config(selected_profile or {})
                         _set_llm_config_inputs()
@@ -203,7 +203,7 @@ def render_sidebar(
                         "删除",
                         key="llm_profile_delete",
                         disabled=selected_profile is None,
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         if kb.delete_llm_profile(str((selected_profile or {}).get("profile_id", ""))):
                             _save_llm_config(_initial_llm_config())
@@ -253,7 +253,7 @@ def render_sidebar(
             )
 
             # ── 单一保存动作：方案 + 密钥一起落地 ──
-            if st.button("保存方案", type="primary", use_container_width=True):
+            if st.button("保存方案", type="primary", width="stretch"):
                 try:
                     saved_profile = kb.save_llm_profile(_llm_config(), set_default=True)
                     _save_llm_config(saved_profile)

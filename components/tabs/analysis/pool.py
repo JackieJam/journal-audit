@@ -47,7 +47,7 @@ def render_pool_management(*, helpers: dict[str, Any]) -> None:
             st.info("当前筛选条件下没有匹配的疑点群体。")
         else:
             display_cols = [c for c in groups_df.columns if c != "group_id"]
-            st.dataframe(groups_df[display_cols], use_container_width=True, hide_index=True)
+            st.dataframe(groups_df[display_cols], width="stretch", hide_index=True)
 
             st.divider()
             st.markdown("#### 批量操作")
@@ -71,7 +71,7 @@ def render_pool_management(*, helpers: dict[str, Any]) -> None:
             if selected_ids:
                 batch_col1, batch_col2, batch_col3 = st.columns(3)
                 with batch_col1:
-                    if st.button("标记为已审核", use_container_width=True, key="pool_mark_reviewed"):
+                    if st.button("标记为已审核", width="stretch", key="pool_mark_reviewed"):
                         for gid in selected_ids:
                             st.session_state.candidate_pool = cp.update_candidate_status(
                                 st.session_state.candidate_pool, gid, "reviewed"
@@ -79,7 +79,7 @@ def render_pool_management(*, helpers: dict[str, Any]) -> None:
                         _autosave_current_project_state()
                         st.rerun()
                 with batch_col2:
-                    if st.button("排除选中群体", use_container_width=True, key="pool_mark_excluded"):
+                    if st.button("排除选中群体", width="stretch", key="pool_mark_excluded"):
                         for gid in selected_ids:
                             st.session_state.candidate_pool = cp.update_candidate_status(
                                 st.session_state.candidate_pool, gid, "excluded"
@@ -87,7 +87,7 @@ def render_pool_management(*, helpers: dict[str, Any]) -> None:
                         _autosave_current_project_state()
                         st.rerun()
                 with batch_col3:
-                    if st.button("移除选中群体", type="secondary", use_container_width=True, key="pool_remove_selected"):
+                    if st.button("移除选中群体", type="secondary", width="stretch", key="pool_remove_selected"):
                         for gid in selected_ids:
                             st.session_state.candidate_pool = cp.remove_candidate_group(
                                 st.session_state.candidate_pool, gid

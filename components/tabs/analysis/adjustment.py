@@ -36,7 +36,7 @@ def render_adjustment_main(
     st.caption("点击表格中的行即可查看该凭证的完整分录。")
     adj_event = st.dataframe(
         adj_summary,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         on_select="rerun",
         selection_mode="single-row",

@@ -65,7 +65,7 @@ def render_income_cost(ctx: AnalysisContext) -> None:
                 income_cost_category,
                 sample_counts=candidate_counts["month"],
             ),
-            use_container_width=True,
+            width="stretch",
             key=f"monthly_income_cost_chart_{audit_year_sel}_{category_key}",
             on_select="rerun",
             selection_mode="points",
@@ -139,7 +139,7 @@ def render_income_cost(ctx: AnalysisContext) -> None:
                 income_cost_category,
                 sample_counts=candidate_counts["month"],
             ),
-            use_container_width=True,
+            width="stretch",
             key=f"income_cost_abnormal_chart_{audit_year_sel}_{category_key}",
             on_select="rerun",
             selection_mode="points",
@@ -205,7 +205,7 @@ def render_income_cost(ctx: AnalysisContext) -> None:
                 customer_top15.attrs["sample_counts"] = candidate_counts["customer"]
                 customer_event = st.plotly_chart(
                     customer_revenue_top_chart(customer_top15, audit_year_sel),
-                    use_container_width=True,
+                    width="stretch",
                     key=f"income_page_customer_chart_{audit_year_sel}_{category_key}",
                     on_select="rerun",
                     selection_mode="points",
@@ -263,7 +263,7 @@ def render_income_cost(ctx: AnalysisContext) -> None:
                 supplier_top15.attrs["sample_counts"] = candidate_counts["supplier"]
                 supplier_event = st.plotly_chart(
                     supplier_payables_top_chart(supplier_top15, audit_year_sel),
-                    use_container_width=True,
+                    width="stretch",
                     key=f"income_page_supplier_chart_{audit_year_sel}_{category_key}",
                     on_select="rerun",
                     selection_mode="points",

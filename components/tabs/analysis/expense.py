@@ -46,7 +46,7 @@ def render_expense(ctx: AnalysisContext) -> None:
                 st.caption("金额单位：元 | 括号内为各费用类别同年占比 | 点击费用类别可回查明细")
                 cross_year_expense_event = st.plotly_chart(
                     cross_year_expense_compare_chart(cross_year_expense_df),
-                    use_container_width=True,
+                    width="stretch",
                     key=f"cross_year_expense_compare_chart_{audit_year_sel}_{cross_year_expense_nonce}",
                     on_select="rerun",
                     selection_mode="points",
@@ -61,7 +61,7 @@ def render_expense(ctx: AnalysisContext) -> None:
                         if st.button(
                             "✗ 清空当前明细",
                             key=f"clear_cross_year_expense_{audit_year_sel}",
-                            use_container_width=True,
+                            width="stretch",
                         ):
                             st.session_state.pop("chart_sel_cross_year_expense", None)
                             st.session_state["chart_sel_cross_year_expense_nonce"] = cross_year_expense_nonce + 1

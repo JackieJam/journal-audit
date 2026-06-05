@@ -31,12 +31,12 @@ def render_cross_year(ctx: AnalysisContext) -> None:
             st.info("💡 跨年交叉稽核需要至少上传两个年度的序时账数据。")
         else:
             st.markdown("#### 跨年收入对比趋势")
-            st.plotly_chart(cross_year_revenue_chart(financials), use_container_width=True)
+            st.plotly_chart(cross_year_revenue_chart(financials), width="stretch")
 
             if findings:
                 st.divider()
                 st.markdown(f"#### 跨年异常稽核发现 ({len(findings)})")
-                st.plotly_chart(cross_year_findings_chart(findings), use_container_width=True)
+                st.plotly_chart(cross_year_findings_chart(findings), width="stretch")
 
                 for f in findings:
                     severity_icon = "🔴" if f.severity == "高" else ("🟡" if f.severity == "中" else "🔵")

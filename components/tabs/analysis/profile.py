@@ -48,12 +48,12 @@ def render_profile(ctx: AnalysisContext) -> None:
 
         # ── 本福特定律（置顶） ──
         st.markdown("##### 本福特定律—首位数字分布")
-        st.plotly_chart(benford_first_digit_chart(p, year_sel), use_container_width=True)
+        st.plotly_chart(benford_first_digit_chart(p, year_sel), width="stretch")
         with st.expander("本福特明细表"):
             bf_df = profile_benford_table(p)
             if not bf_df.empty:
                 st.dataframe(
-                    bf_df, use_container_width=True, hide_index=True,
+                    bf_df, width="stretch", hide_index=True,
                     column_config={
                         "首位数字": st.column_config.NumberColumn("首位数字", format="%d"),
                         "实际频率": st.column_config.NumberColumn("实际频率", format="%.2f%%"),
@@ -71,7 +71,7 @@ def render_profile(ctx: AnalysisContext) -> None:
                               key="profile_trend_view")
         view_map = {"凭证数": "vouchers", "金额": "amount", "双轴": "both"}
         st.plotly_chart(monthly_trend_chart(profiles, view=view_map[trend_view]),
-                        use_container_width=True)
+                        width="stretch")
         with st.expander("月度统计明细"):
             temporal_df = profile_temporal_table(p)
             temporal_display = temporal_df.copy()
@@ -79,7 +79,7 @@ def render_profile(ctx: AnalysisContext) -> None:
                 temporal_display["绝对金额"] = temporal_display["绝对金额"] / 1e4
                 temporal_display["月末5天占比"] = temporal_display["月末5天占比"] * 100
             st.dataframe(
-                temporal_display, use_container_width=True, hide_index=True,
+                temporal_display, width="stretch", hide_index=True,
                 column_config={
                     "凭证行数": st.column_config.NumberColumn("凭证行数", format="%,d"),
                     "绝对金额": st.column_config.NumberColumn("绝对金额(万)", format="%,.1f"),
@@ -87,7 +87,7 @@ def render_profile(ctx: AnalysisContext) -> None:
                 },
             )
         if len(profiles) > 1:
-            st.plotly_chart(month_end_heatmap(profiles), use_container_width=True)
+            st.plotly_chart(month_end_heatmap(profiles), width="stretch")
 
         st.divider()
 
@@ -96,7 +96,7 @@ def render_profile(ctx: AnalysisContext) -> None:
         with c1:
             st.markdown("##### 凭证类型结构")
             if column_check.guard(["凭证类型"], "凭证类型结构"):
-                st.plotly_chart(voucher_type_pie(p, year_sel), use_container_width=True)
+                st.plotly_chart(voucher_type_pie(p, year_sel), width="stretch")
                 with st.expander("凭证类型明细"):
                     vt = p.get("voucher_type_structure", {})
                     vt_rows = [
@@ -104,19 +104,19 @@ def render_profile(ctx: AnalysisContext) -> None:
                          "属性": "系统" if tn in vt.get("auto", {}) else "手工/需关注"}
                         for tn, cnt in vt.get("all", {}).items()
                     ]
-                    st.dataframe(pd.DataFrame(vt_rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(vt_rows), width="stretch", hide_index=True)
         with c2:
             st.markdown("##### 用户集中度 Top10")
             if column_check.guard(["用户名"], "用户集中度分析"):
-                st.plotly_chart(user_bar_chart(p, year_sel), use_container_width=True)
+                st.plotly_chart(user_bar_chart(p, year_sel), width="stretch")
 
         # ── 金额分位数 ──
         st.divider()
         st.markdown("##### 金额分位数分布")
-        st.plotly_chart(amount_distribution_chart(profiles), use_container_width=True)
+        st.plotly_chart(amount_distribution_chart(profiles), width="stretch")
         with st.expander("金额分位数明细"):
             amount_df = profile_amount_percentile_table(p)
             st.dataframe(
-                amount_df, use_container_width=True, hide_index=True,
+                amount_df, width="stretch", hide_index=True,
                 column_config={c: st.column_config.NumberColumn(c, format="¥ %,.0f") for c in amount_df.columns if c != "年份"},
             )
