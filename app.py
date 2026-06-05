@@ -236,6 +236,15 @@ from modules.reporter import generate_report
 from modules import knowledge_base as kb
 from modules import candidate_pool as cp
 from modules import llm_config
+from modules.formatting import (
+    escape_html as _escape_html,
+    format_list as _format_list,
+    format_money as _format_money,
+    format_multiplier as _format_multiplier,
+    format_percent as _format_percent,
+    format_years as _format_years,
+    plain_value as _plain_value,
+)
 from components.sidebar import render_sidebar as _sidebar_render
 from components.tabs.upload import render_upload_tab
 from components.tabs.rules import render_rules_tab
@@ -1058,63 +1067,6 @@ def _render_chart_title_with_download(
             )
 
 
-def _format_money(value: Any) -> str:
-    try:
-        amount = float(value)
-    except (TypeError, ValueError):
-        return str(value)
-    sign = "-" if amount < 0 else ""
-    amount = abs(amount)
-    if amount >= 1e8:
-        return f"{sign}{amount / 1e8:.2f}亿元"
-    if amount >= 1e4:
-        return f"{sign}{amount / 1e4:.1f}万元"
-    return f"{sign}{amount:,.0f}元"
-
-
-def _format_percent(value: Any) -> str:
-    try:
-        return f"{float(value):.0%}"
-    except (TypeError, ValueError):
-        return str(value)
-
-
-def _format_multiplier(value: Any) -> str:
-    try:
-        return f"{float(value):.1f}倍"
-    except (TypeError, ValueError):
-        return str(value)
-
-
-def _format_list(values: Any) -> str:
-    if isinstance(values, list):
-        return "、".join(str(v) for v in values)
-    return str(values)
-
-
-def _plain_value(value: Any) -> Any:
-    """Convert numpy/pandas scalars into UI-friendly Python values."""
-    if isinstance(value, dict):
-        return {str(_plain_value(k)): _plain_value(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_plain_value(v) for v in value]
-    if hasattr(value, "item") and callable(value.item):
-        try:
-            return value.item()
-        except Exception:
-            return value
-    return value
-
-
-def _format_years(values: Any) -> str:
-    years = _plain_value(values)
-    if not years:
-        return "未标明"
-    if not isinstance(years, list):
-        years = [years]
-    return "、".join(str(year) for year in years)
-
-
 def _cross_year_focus_text(category: str) -> str:
     focus_map = {
         "预提冲回配对": "关注年末计提在次年一季度是否足额冲回，判断是否存在跨期悬挂。",
@@ -1790,10 +1742,6 @@ def _render_hover_tooltip_html(
     </div>
     """
     st.markdown(html, unsafe_allow_html=True)
-
-
-def _escape_html(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("\n", "&#10;")
 
 
 def _render_detail_with_actions(
