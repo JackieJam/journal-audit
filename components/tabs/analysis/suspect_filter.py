@@ -20,6 +20,39 @@ from .profile import render_profile
 from .working_capital import render_working_capital
 
 
+@st.fragment
+def _render_inner_sub_tabs(ctx: AnalysisContext) -> None:
+    """内层 6 个子页签：用 fragment 包裹，切换时只局部重跑、不触发整页 rerun（消除粘滞感）。
+
+    fragment 内的图表点击 / 选择属于局部 UI 状态，走 fragment scope 即可（更快）。
+    若发生写全局状态的操作（加入候选池 / 模型建议入库等），由对应 helper 通过
+    st.rerun(scope="app") 显式跳出 fragment 触发整页刷新，保证侧边栏候选池计数、
+    疑点库管理页签与之同步——状态不一致比慢更危险（风险可见）。
+    """
+    # 用稳定 key 驱动，避免「动态 default + 无 key」导致切换时 widget 被重建、点击丢失。
+    SUB_TABS_INNER = ["收入成本", "费用", "暂估往来", "调账冲销", "跨年交叉稽核", "统计画像"]
+    if "_sub_tab_inner_name" not in st.session_state:
+        st.session_state._sub_tab_inner_name = SUB_TABS_INNER[st.session_state.get("_sub_tab_inner", 0)]
+    active_inner = st.segmented_control("", SUB_TABS_INNER, key="_sub_tab_inner_name",
+                                          selection_mode="single", label_visibility="collapsed")
+    if active_inner not in SUB_TABS_INNER:  # single 模式点已选项会返回 None，保持当前页
+        active_inner = SUB_TABS_INNER[st.session_state.get("_sub_tab_inner", 0)]
+    st.session_state._sub_tab_inner = SUB_TABS_INNER.index(active_inner)
+
+    if st.session_state._sub_tab_inner == 0:  # 收入成本
+        render_income_cost(ctx)
+    if st.session_state._sub_tab_inner == 1:  # 费用
+        render_expense(ctx)
+    if st.session_state._sub_tab_inner == 2:  # 暂估往来
+        render_working_capital(ctx)
+    if st.session_state._sub_tab_inner == 3:  # 调账冲销
+        render_adjustment(ctx)
+    if st.session_state._sub_tab_inner == 4:  # 跨年交叉稽核
+        render_cross_year(ctx)
+    if st.session_state._sub_tab_inner == 5:  # 统计画像
+        render_profile(ctx)
+
+
 def render_suspect_filter(
     *,
     financials: dict[int, Any],
@@ -90,14 +123,6 @@ def render_suspect_filter(
             voucher_cnt = len(monthly_view) if hasattr(monthly_view, '__len__') else 0
             st.metric("月数", voucher_cnt)
 
-    SUB_TABS_INNER = ["收入成本", "费用", "暂估往来", "调账冲销", "跨年交叉稽核", "统计画像"]
-    if "_sub_tab_inner" not in st.session_state:
-        st.session_state._sub_tab_inner = 0
-    active_inner = st.segmented_control("", SUB_TABS_INNER, default=SUB_TABS_INNER[st.session_state._sub_tab_inner],
-                                          selection_mode="single", label_visibility="collapsed")
-    if active_inner is not None:
-        st.session_state._sub_tab_inner = SUB_TABS_INNER.index(active_inner)
-
     ctx = AnalysisContext(
         audit_year_sel=audit_year_sel,
         df_audit=df_audit,
@@ -111,15 +136,5 @@ def render_suspect_filter(
         helpers=helpers,
     )
 
-    if st.session_state._sub_tab_inner == 0:  # 收入成本
-        render_income_cost(ctx)
-    if st.session_state._sub_tab_inner == 1:  # 费用
-        render_expense(ctx)
-    if st.session_state._sub_tab_inner == 2:  # 暂估往来
-        render_working_capital(ctx)
-    if st.session_state._sub_tab_inner == 3:  # 调账冲销
-        render_adjustment(ctx)
-    if st.session_state._sub_tab_inner == 4:  # 跨年交叉稽核
-        render_cross_year(ctx)
-    if st.session_state._sub_tab_inner == 5:  # 统计画像
-        render_profile(ctx)
+    # 内层 6 个子页签包在 fragment 内：切换只局部重跑，年份/口径/KPI（fragment 外）不重渲染。
+    _render_inner_sub_tabs(ctx)

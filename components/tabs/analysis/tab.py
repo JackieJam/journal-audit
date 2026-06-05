@@ -80,13 +80,15 @@ def render_analysis_tab(main_tab=None, **helpers):
     findings = st.session_state.cross_year_findings
 
     # 顶层：财务概况 / 可疑样本库筛选 / 疑点库管理（用 session_state 保持选择，图表点击后不跳回第一个）
+    # 用稳定 key 驱动，避免「动态 default + 无 key」导致切换时 widget 被重建、点击丢失（卡顿根因）。
     SUB_TABS_TOP = ["财务概况", "可疑样本库筛选", "疑点库管理"]
-    if "_sub_tab_top" not in st.session_state:
-        st.session_state._sub_tab_top = 0
-    top_sel = st.segmented_control("", SUB_TABS_TOP, default=SUB_TABS_TOP[st.session_state._sub_tab_top],
+    if "_sub_tab_top_name" not in st.session_state:
+        st.session_state._sub_tab_top_name = SUB_TABS_TOP[st.session_state.get("_sub_tab_top", 0)]
+    top_sel = st.segmented_control("", SUB_TABS_TOP, key="_sub_tab_top_name",
                                     selection_mode="single", label_visibility="collapsed")
-    if top_sel is not None:
-        st.session_state._sub_tab_top = SUB_TABS_TOP.index(top_sel)
+    if top_sel not in SUB_TABS_TOP:  # single 模式点已选项会返回 None，保持当前页
+        top_sel = SUB_TABS_TOP[st.session_state.get("_sub_tab_top", 0)]
+    st.session_state._sub_tab_top = SUB_TABS_TOP.index(top_sel)
 
     if st.session_state._sub_tab_top == 1:  # 可疑样本库筛选
         render_suspect_filter(financials=financials, profiles=profiles, findings=findings, helpers=helpers)

@@ -977,6 +977,8 @@ def _render_candidate_add_popover(
                 recommendation=recommendation,
             )
             st.success("已加入疑点库。")
+            # 写入全局候选池后跳出 fragment 触发整页刷新，保证侧边栏/疑点库页签同步（风险可见）。
+            st.rerun(scope="app")
 
 
 def _candidate_pool_voucher_ids() -> set[str]:
@@ -1951,7 +1953,7 @@ def _render_detail_with_actions(
                     selector=selector, manual_final=False)
                 st.session_state[sel_state_key] = []
                 st.success(f"已批量加入 {len(current_selected)} 个凭证到疑点库。")
-                st.rerun()
+                st.rerun(scope="app")
     with col_final:
         with st.popover("🚀 批量直入最终样本", use_container_width=True, disabled=not current_selected):
             tags_final = st.multiselect("风险标签", key=f"{key}_pop_final_tags",
@@ -1969,7 +1971,7 @@ def _render_detail_with_actions(
                     selector=selector, manual_final=True)
                 st.session_state[sel_state_key] = []
                 st.success(f"已批量直入 {len(current_selected)} 个凭证到最终样本。")
-                st.rerun()
+                st.rerun(scope="app")
 
     # ── 已选凭证清单 ──
     if current_selected:
@@ -2822,7 +2824,7 @@ def _render_candidate_recommendations_for_module(
             _autosave_current_project_state()
             status.text("大模型结果已生成")
             progress.progress(100)
-            st.rerun()
+            st.rerun(scope="app")
 
     if show_controls:
         generate_col, auto_add_col = st.columns(2)
@@ -2849,7 +2851,7 @@ def _render_candidate_recommendations_for_module(
                         _autosave_current_project_state()
                         if added:
                             st.success(f"已加入 {added} 条模型建议到疑点库。{f'跳过 {skipped} 条无匹配明细建议。' if skipped else ''}")
-                            st.rerun()
+                            st.rerun(scope="app")
                         else:
                             st.warning("模型建议没有匹配到可加入疑点库的明细分录。")
                 except Exception as e:
@@ -2877,7 +2879,7 @@ def _render_candidate_recommendations_for_module(
             added, skipped = _add_recommendations([(idx, rec, False) for idx, rec in enumerate(filtered_recommendations)])
             if added:
                 st.success(f"已加入 {added} 条模型建议。{f'跳过 {skipped} 条无匹配明细建议。' if skipped else ''}")
-                st.rerun()
+                st.rerun(scope="app")
             else:
                 st.warning("没有可加入的模型建议；建议条件没有匹配到明细分录。")
 
@@ -2923,7 +2925,7 @@ def _render_candidate_recommendations_for_module(
                         added, skipped = _add_recommendations([(idx, rec, False)])
                         if added:
                             st.success("已加入疑点库。")
-                            st.rerun()
+                            st.rerun(scope="app")
                         else:
                             st.warning("当前建议没有匹配到可加入疑点库的明细分录。")
                 with action_col2:
@@ -2935,7 +2937,7 @@ def _render_candidate_recommendations_for_module(
                         added, skipped = _add_recommendations([(idx, rec, True)])
                         if added:
                             st.success("已直入最终样本。")
-                            st.rerun()
+                            st.rerun(scope="app")
                         else:
                             st.warning("当前建议没有匹配到可直入最终样本的明细分录。")
 
@@ -3011,12 +3013,22 @@ def _render_missing_columns_banner() -> None:
 for _load_warning in kb.consume_load_warnings():
     st.warning(f"⚠️ {_load_warning}")
 
+# 页签状态用稳定 key 驱动，避免「动态 default + 无 key」导致的点击丢失/不切换。
+# 程序化跳转（如上传后跳到分析页）走 _pending_tab 中转，在 widget 实例化前写入。
+if "_pending_tab" in st.session_state:
+    st.session_state.active_tab_name = TAB_NAMES[st.session_state.pop("_pending_tab")]
+elif "active_tab_name" not in st.session_state:
+    st.session_state.active_tab_name = TAB_NAMES[st.session_state.get("active_tab", 0)]
+
 active_tab_name = st.segmented_control(
     "页签导航", TAB_NAMES,
-    default=TAB_NAMES[st.session_state.get("active_tab", 0)],
+    key="active_tab_name",
     selection_mode="single", label_visibility="collapsed"
 )
-st.session_state.active_tab = TAB_NAMES.index(active_tab_name) if active_tab_name in TAB_NAMES else 0
+# single 模式下点击已选项会返回 None（取消选择）；此时保持当前页签，不让界面悬空。
+if active_tab_name not in TAB_NAMES:
+    active_tab_name = TAB_NAMES[st.session_state.get("active_tab", 0)]
+st.session_state.active_tab = TAB_NAMES.index(active_tab_name)
 
 # ── Tab 1：上传数据 ──
 if st.session_state.active_tab == 0:

@@ -328,7 +328,8 @@ def _render_loaded_summary() -> None:
     _render_account_config_section()
 
     if st.button("确认识别结果，进入分析页", type="primary", use_container_width=True):
-        st.session_state.active_tab = 1
+        # 走 _pending_tab 中转：下次 rerun 在 segmented_control 实例化前写入其 key。
+        st.session_state["_pending_tab"] = 1
         st.rerun()
 
 
