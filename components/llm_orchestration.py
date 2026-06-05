@@ -511,29 +511,29 @@ def backfill_recommendation_condition(
 
     if module_filter == "收入成本":
         if not condition.get("kind"):
-            customer_match = re.search(r"客户([A-Za-z0-9_\\-\\s\\u4e00-\\u9fff（）()]+?)收入", text)
+            customer_match = re.search(r"客户([A-Za-z0-9_\-\s一-鿿（）()]+?)收入", text)
             if customer_match:
                 condition["kind"] = "customer_revenue"
                 condition["customer"] = customer_match.group(1).strip()
         if not condition.get("year"):
-            year_match = re.search(r"(20\\d{2})年", text)
+            year_match = re.search(r"(20\d{2})年", text)
             if year_match:
                 condition["year"] = int(year_match.group(1))
         if not condition.get("kind") and "毛利" in text:
-            months = [int(m) for m in re.findall(r"(\\d{1,2})月", text)]
+            months = [int(m) for m in re.findall(r"(\d{1,2})月", text)]
             if months:
                 condition["kind"] = "monthly_income_cost"
                 condition["metric"] = "gross"
                 condition["month"] = months[0]
                 condition["months"] = months
         if not condition.get("kind") and "供应商" in text:
-            supplier_match = re.search(r"供应商([A-Za-z0-9_\\-\\s\\u4e00-\\u9fff（）()]+?)(应付|暂估|收入|成本)", text)
+            supplier_match = re.search(r"供应商([A-Za-z0-9_\-\s一-鿿（）()]+?)(应付|暂估|收入|成本)", text)
             if supplier_match:
                 condition["kind"] = "supplier_payable"
                 condition["supplier"] = supplier_match.group(1).strip()
     elif module_filter == "费用":
         if not condition.get("kind"):
-            expense_match = re.search(r"费用类别\\s*([A-Za-z0-9_\\-\\s\\u4e00-\\u9fff（）()]+)", text)
+            expense_match = re.search(r"费用类别\s*([A-Za-z0-9_\-\s一-鿿（）()]+)", text)
             if expense_match:
                 condition["kind"] = "expense_category"
                 condition["expense_category"] = expense_match.group(1).strip()
