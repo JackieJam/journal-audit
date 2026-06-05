@@ -70,3 +70,58 @@ def test_run_sampling_button_does_not_crash(isolated_app_home, sample_data):
     at = _load(sample_data, "样本抽取")
     assert _click(at, "执行样本抽取"), "未找到「执行样本抽取」按钮"
     assert not at.exception
+
+
+# ── LLM 建议编排器基线 ──
+# 编排器（_render_candidate_recommendations_for_module + _detail_for_recommendation
+# + _backfill_recommendation_condition + _add_recommendations）此前完全无护网：
+# 无 Key 时 _can_use_llm() 直接 return，AppTest 走不到卡片路径。这里预置 _manual_api_key
+# （侧边栏每次 run 用 _resolve_api_key() 覆盖 _api_key，故必须从可解析来源注入）并把模型
+# 结果直接 seed 进 audit_llm_analysis（绕开真实 LLM 调用），驱动卡片渲染与「加入疑点库」
+# 全链路，为后续把编排器抽到 components/llm_orchestration.py 兜底。
+
+_SEEDED_UNIFIED_KEY = "unified::2022,2023::总计"
+_SEEDED_RECOMMENDATION = {
+    "title": "2023年5月净收入波动",
+    "reason": "测试用建议：月度净收入异常，回查当月收入凭证。",
+    "risk_level": "中",
+    "source_module": "收入成本",
+    "source_view": "月度收入成本",
+    "tags": ["收入波动"],
+    "audit_procedure": "抽查当月大额收入确认凭证",
+    "condition": {"kind": "monthly_income_cost", "year": 2023, "month": 5, "metric": "revenue"},
+}
+
+
+def _load_with_seeded_recommendations(sample_data) -> AppTest:
+    """加载数据 + 预置 API Key + 模型建议，落在可疑样本库筛选/收入成本内层页签。"""
+    return _load(
+        sample_data,
+        "序时账分析",
+        _manual_api_key="test-key",
+        _sub_tab_top_name="可疑样本库筛选",
+        _sub_tab_inner_name="收入成本",
+        audit_year_sel=2023,
+        income_cost_category_2023="总计",
+        audit_llm_analysis={
+            _SEEDED_UNIFIED_KEY: {
+                "overview_analysis": {},
+                "module_recommendations": {"收入成本": [_SEEDED_RECOMMENDATION]},
+            }
+        },
+    )
+
+
+def test_recommendation_cards_render_with_seeded_analysis(isolated_app_home, sample_data):
+    """有 Key + 已缓存建议时，收入成本页应渲染建议卡片（出现「加入疑点库」按钮）且不报错。"""
+    at = _load_with_seeded_recommendations(sample_data)
+    assert not at.exception
+    assert any("加入疑点库" in b.label for b in at.button), "未渲染出建议卡片的入库按钮"
+
+
+def test_recommendation_add_to_pool(isolated_app_home, sample_data):
+    """点「一键全部加入疑点库」应把建议匹配到的明细写入候选池（覆盖编排器取数全链路）。"""
+    at = _load_with_seeded_recommendations(sample_data)
+    assert _click(at, "一键全部加入疑点库"), "未找到「一键全部加入疑点库」按钮"
+    assert not at.exception
+    assert at.session_state["candidate_pool"], "建议未写入候选池，编排器取数链路可能回归"
