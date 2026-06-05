@@ -154,9 +154,9 @@ class TestBackfillRecommendationCondition:
     """仅测不触 st.session_state 的分支（收入成本 / 费用）；
     跨年 / 统计画像分支读 year_map，留给 AppTest 基线覆盖。
 
-    这些断言锁定的是**当前真实行为**（重构前后一致），其中 year/gross/expense
-    的文本推断因源码正则过度转义（``r"(\\d{1,2})月"`` 实际匹配字面量 ``\\d`` 而非
-    数字）而从不触发——属于潜伏 bug，已另起 task 单独修复，不在本次重构内改动。"""
+    历史背景：源码正则曾被过度转义（如 ``r"(\\d{1,2})月"`` 实际匹配字面量 ``\\d``
+    而非数字），导致 year/gross/expense/中文客户名 的文本推断从不触发。该潜伏 bug
+    已修复为正确的单反斜杠转义，以下断言锁定**修复后**的真实推断行为。"""
 
     def test_income_cost_passes_through_existing_kind(self):
         rec = {"condition": {"kind": "customer_revenue", "customer": "ACME", "year": 2023}}
@@ -164,24 +164,40 @@ class TestBackfillRecommendationCondition:
         assert out["kind"] == "customer_revenue" and out["customer"] == "ACME"
 
     def test_income_cost_infers_customer_from_ascii_text(self):
-        # customer 文本推断对 ASCII 客户名生效（字符类仍含 A-Za-z）。
+        # customer 文本推断对 ASCII 客户名生效（字符类含 A-Za-z）。
         rec = {"title": "客户ACME收入异常", "reason": "", "condition": {}}
         out = backfill_recommendation_condition(rec, "总计", "收入成本")
         assert out["kind"] == "customer_revenue"
         assert "ACME" in out["customer"]
 
-    def test_gross_inference_currently_broken(self):
-        # 锁定潜伏 bug：r"(\d{1,2})月" 被写成 r"(\\d{1,2})月"，故毫无推断。
+    def test_income_cost_infers_chinese_customer(self):
+        # 修复后：中文客户名（字符类含 一-鿿）能被正确推断。
+        rec = {"title": "客户北京远大科技收入异常", "reason": "", "condition": {}}
+        out = backfill_recommendation_condition(rec, "总计", "收入成本")
+        assert out["kind"] == "customer_revenue"
+        assert out["customer"] == "北京远大科技"
+
+    def test_income_cost_infers_chinese_supplier(self):
+        # 修复后：中文供应商名能被正确推断。
+        rec = {"title": "供应商上海宏达暂估异常", "reason": "", "condition": {}}
+        out = backfill_recommendation_condition(rec, "总计", "收入成本")
+        assert out["kind"] == "supplier_payable"
+        assert out["supplier"] == "上海宏达"
+
+    def test_gross_inference_now_works(self):
+        # 修复后：r"(\d{1,2})月" 正确匹配数字，毛利推断生效。
         rec = {"title": "3月毛利异常波动", "reason": "", "condition": {}}
         out = backfill_recommendation_condition(rec, "总计", "收入成本")
-        assert "kind" not in out
+        assert out["kind"] == "monthly_income_cost"
+        assert out["metric"] == "gross"
+        assert 3 in out["months"]
 
-    def test_expense_inference_currently_broken(self):
+    def test_expense_inference_now_works(self):
         rec = {"title": "费用类别 业务招待费 偏高", "reason": "", "condition": {}}
         out = backfill_recommendation_condition(rec, "总计", "费用")
-        assert "kind" not in out
+        assert out["kind"] == "expense_category"
 
-    def test_year_inference_currently_broken(self):
+    def test_year_inference_now_works(self):
         rec = {"title": "2023年收入异常", "reason": "", "condition": {}}
         out = backfill_recommendation_condition(rec, "总计", "收入成本")
-        assert "year" not in out
+        assert out["year"] == 2023
