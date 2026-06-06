@@ -11,7 +11,7 @@ uv run streamlit run app.py
 ## 文件结构
 ```
 app.py                      # Streamlit 主入口（segmented_control 4 页签：上传数据/序时账分析/规则管理/样本抽取）
-                            # ~3100 行：4 个页签均已抽到 components/tabs/，app.py 保留 session/helper 定义并注入各页签
+                            # ~720 行：4 个页签均已抽到 components/tabs/，app.py 保留 session/helper 定义并注入各页签
                             # 各页签 render 函数通过 **helpers 注入 app.py 私有 helper（仍在 app.py 命名空间执行）
 pyproject.toml              # 依赖（uv 管理）
 modules/
@@ -34,9 +34,17 @@ modules/
   locking.py                # 跨平台文件锁（并发写保护）
   runtime_context.py        # 运行时上下文 / 按用户隔离的存储根路径
   json_utils.py             # 统一 JSON 解析（处理 LLM 返回的 markdown 代码块 + 正则兜底）
+  formatting.py             # 纯格式化 helper（金额/百分比/倍数/年份/HTML 转义）
+  rule_text.py              # 规则文本/条件/变更/计数 helper（规则展示用）
 components/
   charts.py                 # Plotly 图表组件
   sidebar.py                # 侧边栏
+  styles.py                 # 全局 CSS 注入（inject_global_css，从 app.py 抽离的纯样式）
+  exports.py                # Excel 导出层（DataFrame→字节流 + 图表标题带下载按钮）
+  cross_year_view.py        # 跨年异常/费用结构/经验库规则的展示层（纯渲染，无 session）
+  chart_selection.py        # 图表/表格点选事件解析（纯函数）
+  candidate_actions.py      # 疑点库详情/动作 UI（候选凭证详情、添加 popover、行样式）
+  llm_orchestration.py      # LLM 推荐编排（推荐→明细数据路径 + step-2 有状态 helper）
   tabs/
     upload.py               # Tab 0：上传数据（已抽离）
     rules.py                # Tab 2：规则管理 增删改查（已抽离）

@@ -6,11 +6,7 @@
 
 from __future__ import annotations
 
-import io
-import re
 import functools
-from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import streamlit as st
@@ -25,170 +21,9 @@ st.set_page_config(
 )
 
 # ── 全局 CSS ──
-st.markdown("""
-<style>
-/* ── 根变量 ── */
-:root {
-    --accent: #4f8ef7;
-    --accent-soft: rgba(79, 142, 247, 0.12);
-    --gold: #d4a853;
-    --gold-soft: rgba(212, 168, 83, 0.10);
-    --red: #f87171;
-    --green: #4ade80;
-    --radius: 6px;
-    --radius-lg: 10px;
-}
+from components.styles import inject_global_css
 
-/* ── 全局字体 ── */
-html, body, .stApp {
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-}
-
-/* ── 卡片容器 ── */
-[data-testid="stExpander"] details,
-div[data-testid="stVerticalBlockBorderWrapper"] {
-    border: 1px solid rgba(255,255,255,0.06) !important;
-    border-radius: var(--radius-lg) !important;
-    background: rgba(255,255,255,0.015) !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.2) !important;
-    transition: border-color 0.2s ease;
-}
-[data-testid="stExpander"] details:hover,
-div[data-testid="stVerticalBlockBorderWrapper"]:hover {
-    border-color: rgba(255,255,255,0.12) !important;
-}
-
-/* ── Metrics 指标卡 ── */
-[data-testid="stMetric"] {
-    background: linear-gradient(135deg, rgba(79,142,247,0.06), rgba(79,142,247,0.02));
-    border: 1px solid rgba(79,142,247,0.10);
-    border-radius: var(--radius-lg);
-    padding: 0.6rem 0.8rem;
-    transition: border-color 0.2s ease;
-}
-[data-testid="stMetric"]:hover {
-    border-color: rgba(79,142,247,0.22);
-}
-[data-testid="stMetric"] label {
-    font-size: 0.7rem !important;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: rgba(220,226,234,0.55) !important;
-}
-[data-testid="stMetric"] [data-testid="stMetricValue"] {
-    font-size: 1.4rem !important;
-    font-weight: 600 !important;
-}
-
-/* ── 按钮（圆角胶囊形）── */
-.stButton > button {
-    border-radius: 24px !important;
-    font-weight: 500 !important;
-    letter-spacing: 0.3px;
-    transition: all 0.15s ease !important;
-}
-.stButton > button[kind="primary"] {
-    border: none !important;
-}
-.stButton > button[kind="primary"]:hover {
-    filter: brightness(1.1);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(79,142,247,0.3);
-}
-
-/* ── 数据表格 ── */
-[data-testid="stDataFrame"] {
-    border-radius: var(--radius-lg) !important;
-    overflow: hidden;
-    border: 1px solid rgba(255,255,255,0.06) !important;
-}
-
-/* ── 分割线 ── */
-hr, [data-testid="stDivider"] {
-    border-color: rgba(255,255,255,0.06) !important;
-    margin: 1.2rem 0 !important;
-}
-
-/* ── Checkbox / Toggle ── */
-[data-testid="stCheckbox"] label {
-    font-weight: 500 !important;
-}
-
-/* ── Expander 头部 ── */
-[data-testid="stExpander"] summary {
-    font-weight: 500 !important;
-    font-size: 0.9rem !important;
-    color: rgba(220,226,234,0.85) !important;
-}
-
-/* ── 进度条 ── */
-[data-testid="stProgress"] > div > div {
-    background: linear-gradient(90deg, var(--accent), #818cf8) !important;
-    border-radius: 4px !important;
-}
-
-/* ── Radio / Segmented control ── */
-[data-testid="stSegmentedControl"] {
-    background: rgba(255,255,255,0.03) !important;
-    border-radius: var(--radius) !important;
-    padding: 3px !important;
-}
-[data-testid="stSegmentedControl"] label {
-    border-radius: calc(var(--radius) - 2px) !important;
-    transition: all 0.2s ease !important;
-}
-
-/* ── Selectbox / Text input ── */
-[data-testid="stSelectbox"] > div > div,
-[data-testid="stTextInput"] input,
-.stTextArea textarea,
-.stNumberInput input {
-    border-radius: var(--radius) !important;
-    border-color: rgba(255,255,255,0.10) !important;
-}
-[data-testid="stSelectbox"] > div > div:focus-within,
-[data-testid="stTextInput"] input:focus,
-.stTextArea textarea:focus,
-.stNumberInput input:focus {
-    border-color: var(--accent) !important;
-    box-shadow: 0 0 0 2px rgba(79,142,247,0.15) !important;
-}
-
-/* ── Tab 内部 st.tabs ── */
-.stTabs [data-baseweb="tab"] {
-    font-size: 0.85rem;
-    font-weight: 500;
-}
-.stTabs [data-baseweb="tab-highlight"] {
-    background: var(--accent) !important;
-}
-
-/* ── 侧边栏优化 ── */
-[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0d1320 0%, #0c1117 100%);
-    border-right: 1px solid rgba(255,255,255,0.05);
-}
-[data-testid="stSidebar"] .stMetric {
-    background: rgba(255,255,255,0.03) !important;
-    border: 1px solid rgba(255,255,255,0.04) !important;
-}
-
-/* ── 图表容器 ── */
-.js-plotly-plot {
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-}
-
-/* ── 滚动条 ── */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.08);
-    border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
-</style>
-""", unsafe_allow_html=True)
+inject_global_css()
 
 # ── 模块导入 ──
 from modules.ingestion import load_files, summarize_years, detect_columns
@@ -269,6 +104,19 @@ from components.candidate_actions import (
     reset_editor_state as _reset_editor_state,
     resolve_focused_voucher as _resolve_focused_voucher,
     style_selected_detail_rows as _style_selected_detail_rows,
+)
+from components.exports import (
+    dataframe_to_excel_bytes as _dataframe_to_excel_bytes,
+    render_chart_title_with_download as _render_chart_title_with_download,
+)
+from components.cross_year_view import (
+    cross_year_evidence_rows as _cross_year_evidence_rows,
+    cross_year_expense_table as _cross_year_expense_table,
+    cross_year_focus_text as _cross_year_focus_text,
+    expense_summary_table as _expense_summary_table,
+    format_evidence_cell as _format_evidence_cell,
+    render_cross_year_finding as _render_cross_year_finding,
+    render_library_rules as _render_library_rules,
 )
 from components.sidebar import render_sidebar as _sidebar_render
 from components.tabs.upload import render_upload_tab
@@ -602,46 +450,6 @@ def _require_loaded_data() -> None:
     return False
 
 
-def _expense_summary_table(financial: dict) -> pd.DataFrame:
-    expenses = dict(financial.get("expenses", {}))
-    if financial.get("rd_expense", 0) != 0:
-        expenses["研发费用"] = financial["rd_expense"]
-    if financial.get("financial_expense", 0) != 0:
-        expenses["财务费用(汇兑)"] = financial["financial_expense"]
-    if financial.get("tax_surcharge", 0) != 0:
-        expenses["税金及附加"] = financial["tax_surcharge"]
-
-    items = sorted(expenses.items(), key=lambda x: x[1], reverse=True)
-    total = sum(value for _, value in items)
-    rows = [
-        {
-            "费用类别": category,
-            "金额": value,
-            "占比": value / total if total else 0,
-        }
-        for category, value in items
-    ]
-    return pd.DataFrame(rows)
-
-
-def _cross_year_expense_table(financials: dict[int, dict]) -> pd.DataFrame:
-    rows: list[dict[str, Any]] = []
-    for year, financial in sorted(financials.items()):
-        summary = _expense_summary_table(financial)
-        if summary.empty:
-            continue
-        for row in summary.to_dict("records"):
-            rows.append(
-                {
-                    "年份": int(year),
-                    "费用类别": str(row.get("费用类别", "")),
-                    "金额": float(row.get("金额", 0) or 0),
-                    "占比": float(row.get("占比", 0) or 0),
-                }
-            )
-    return pd.DataFrame(rows)
-
-
 CHART_TAG_PRESETS: dict[str, dict[str, list[str]]] = {
     "月度收入成本": {
         "options": ["月度", "月度异常", "收入波动", "成本波动", "大额", "月末", "年末"],
@@ -702,194 +510,6 @@ def _income_page_candidate_counts(year: int, category: str) -> dict[str, dict[An
             supplier = str(supplier)
             counts["supplier"][supplier] = counts["supplier"].get(supplier, 0) + voucher_count
     return counts
-
-
-def _dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Sheet1") -> bytes:
-    export_df = df.copy()
-    for col in export_df.columns:
-        if pd.api.types.is_datetime64_any_dtype(export_df[col]):
-            export_df[col] = export_df[col].dt.strftime("%Y-%m-%d")
-
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        export_df.to_excel(writer, index=False, sheet_name=sheet_name[:31] or "Sheet1")
-    return output.getvalue()
-
-
-def _render_chart_title_with_download(
-    title: str,
-    *,
-    df: pd.DataFrame,
-    file_name: str,
-    key: str,
-    sheet_name: str,
-) -> None:
-    title_col, action_col = st.columns([0.92, 0.08])
-    with title_col:
-        st.markdown(f"#### {title}")
-    with action_col:
-        if df.empty:
-            st.button("下载", key=f"{key}_disabled", disabled=True, help="当前图表暂无可导出数据")
-        else:
-            st.download_button(
-                "下载",
-                data=_dataframe_to_excel_bytes(df, sheet_name=sheet_name),
-                file_name=file_name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=key,
-                help="下载当前图表对应的 Excel",
-                width="stretch",
-            )
-
-
-def _cross_year_focus_text(category: str) -> str:
-    focus_map = {
-        "预提冲回配对": "关注年末计提在次年一季度是否足额冲回，判断是否存在跨期悬挂。",
-        "预提冲回金额不符": "关注年末计提和期后冲回金额是否接近，判断是否存在跨年损益调节。",
-        "收入跨年确认": "关注年末收入冲高后次年一月红字冲回，判断是否存在收入提前确认。",
-        "期末余额持续累积": "关注应收、预付或其他应收余额是否连续堆积，判断资产是否虚增或长期未清理。",
-        "对手方跨年资金循环": "关注同一对手方年末资金流出和次年年初资金流入是否高度匹配。",
-        "费用科目年度突变": "关注费用科目是否跨年异常放量，判断是否存在集中确认或重分类。",
-        "手工凭证占比持续上升": "关注手工过账比例是否连续抬升，判断内控自动化和职责分离是否弱化。",
-        "新科目组合涌现": "关注历史未出现过的借贷科目组合，判断是否存在新业务通道或绕过既有流程。",
-    }
-    return focus_map.get(category, "关注跨年金额、比例、对手方和凭证线索是否共同指向同一异常模式。")
-
-
-def _format_evidence_cell(key: str, value: Any) -> str:
-    value = _plain_value(value)
-    if value is None:
-        return "无"
-    if key in {
-        "accrual_amount",
-        "reversal_amount",
-        "jan_reversal",
-        "out_amount",
-        "in_amount",
-        "prev_amount",
-        "curr_amount",
-    }:
-        return _format_money(value)
-    if key == "coverage_ratio":
-        return _format_percent(value)
-    if key == "dec_ratio":
-        return _format_multiplier(value)
-    if isinstance(value, float):
-        return f"{value:,.2f}"
-    if isinstance(value, list):
-        if all(isinstance(item, list) and len(item) == 2 for item in value):
-            return "、".join(f"{item[0]}-{item[1]}" for item in value) if value else "无"
-        return "、".join(str(v) for v in value) if value else "无"
-    return str(value)
-
-
-def _cross_year_evidence_rows(finding: Any) -> list[dict[str, str]]:
-    labels = {
-        "accrual_amount": ("年末预提金额", "年末已经计提、需要在期后核销或冲回的金额。"),
-        "reversal_amount": ("次年Q1冲回金额", "次年一季度已找到的冲销或冲回金额。"),
-        "coverage_ratio": ("冲回覆盖率", "覆盖率越低，跨期悬挂风险越高。"),
-        "dec_ratio": ("12月收入放大倍数", "12月收入相对前11月均值的放大程度。"),
-        "jan_reversal": ("次年1月红字冲回", "期后红字金额越大，越需要检查收入截止。"),
-        "vendor": ("对手方编号", "用于定位需要进一步穿透的供应商或客户。"),
-        "out_amount": ("年末流出金额", "年末向该对手方付出的资金规模。"),
-        "in_amount": ("次年Q1流入金额", "次年一季度从同一对手方收回的资金规模。"),
-        "account_prefix": ("科目前缀", "用于定位异常放量的会计科目。"),
-        "category": ("科目类别", "按自动分类识别出的费用大类（费用 / 研发 / 财务 / 税金）。"),
-        "prev_amount": ("上年发生额", "对比基准年份的发生额。"),
-        "curr_amount": ("本年发生额", "异常年份的发生额。"),
-        "new_pair_count": ("新增科目组合数", "历史未出现过的借贷组合数量。"),
-        "sample_pairs": ("样例科目组合", "抽样展示的新增借贷组合，用于后续穿透。"),
-    }
-    evidence = _plain_value(getattr(finding, "evidence", {}) or {})
-    rows: list[dict[str, str]] = [
-        {
-            "维度": "涉及年份",
-            "观察值": _format_years(getattr(finding, "years_involved", [])),
-            "怎么解读": "先按这些年度之间的交易连续性和期后变化做穿透。",
-        },
-        {
-            "维度": "异常方向金额",
-            "观察值": _format_money(getattr(finding, "amount", 0)),
-            "怎么解读": "用于判断该异常是否值得进入审计抽样优先级。",
-        },
-    ]
-
-    if evidence and all(str(k).isdigit() for k in evidence.keys()):
-        for year, amount in sorted(evidence.items()):
-            rows.append(
-                {
-                    "维度": f"{year}年余额/发生额",
-                    "观察值": _format_money(amount),
-                    "怎么解读": "用于观察跨年趋势是否连续累积或异常跳升。",
-                }
-            )
-        return rows
-
-    for key, value in evidence.items():
-        label, explanation = labels.get(str(key), (str(key), "规则识别时保留的关键证据。"))
-        rows.append(
-            {
-                "维度": label,
-                "观察值": _format_evidence_cell(str(key), value),
-                "怎么解读": explanation,
-            }
-        )
-    return rows
-
-
-def _render_cross_year_finding(finding: Any) -> None:
-    st.markdown(f"**异常说明**：{finding.description}")
-    st.caption(f"关注点：{_cross_year_focus_text(finding.category)}")
-    st.dataframe(
-        pd.DataFrame(_cross_year_evidence_rows(finding)),
-        width="stretch",
-        hide_index=True,
-    )
-    voucher_ids = _plain_value(getattr(finding, "voucher_ids", []) or [])
-    if voucher_ids:
-        st.caption(f"关联凭证：已识别 {len(voucher_ids)} 个凭证号，优先抽查金额最大或期后冲回相关凭证。")
-    raw_evidence = _plain_value(getattr(finding, "evidence", {}) or {})
-    if raw_evidence:
-        with st.expander("技术明细（用于核对规则证据）", expanded=False):
-            st.json(raw_evidence)
-
-
-def _render_library_rules(lib_rules: list[dict[str, Any]]) -> None:
-    if not lib_rules:
-        st.info("💡 经验库里还没有可推荐的历史规则。")
-        return
-
-    for rule in lib_rules:
-        name = rule.get("name") or "未命名规则"
-        rate = rule.get("performance", {}).get("confirmation_rate", 0)
-        category = rule.get("category") or "未分类"
-        
-        rate_color = "green" if rate >= 0.7 else ("orange" if rate >= 0.4 else "gray")
-        
-        with st.expander(f"📚 {name} | 历史确认率 :{rate_color}[{rate:.0%}]", expanded=False):
-            st.markdown(f"**类别**：{category}")
-            perf = rule.get("performance", {})
-            st.caption(
-                f"📊 历史表现：已在 {perf.get('engagements_used', 0)} 个项目中使用，"
-                f"累计命中 {perf.get('total_hits', 0)}，累计确认 {perf.get('total_confirmed', 0)}。"
-            )
-            
-            params = rule.get("parameters", {})
-            if params:
-                st.markdown("**⚙️ 经验参数**")
-                for line in _generic_param_lines(params):
-                    st.markdown(f"- {line}")
-            
-            rationale = rule.get("rationale", "")
-            if rationale:
-                st.success(f"**💡 经验说明**：{rationale}")
-            
-            notes = rule.get("applicable_context", {}).get("notes", "")
-            if notes:
-                st.info(f"📍 适用背景：{notes}")
-            source_engagement = rule.get("source_engagement", "")
-            if source_engagement:
-                st.caption(f"来源项目：{source_engagement}")
 
 
 @st.cache_data(show_spinner=False)
