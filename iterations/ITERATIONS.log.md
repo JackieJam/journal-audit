@@ -1,8 +1,7 @@
 # 审计工具迭代日志 (Audit Tool Iteration Log)
 
-> ⚠️ **`v1_original/` 已废弃，仅作历史参考，不被运行时引用（代码库中 0 处 import）。**
-> 当前生产代码在仓库根目录 `app.py` + `modules/` + `components/`。
-> 修改功能请勿改动 `v1_original/`；如需彻底清理可整体移至工作区 `99_Archive/`。
+> ⚠️ **V1~V4 历史源码（原 `v1_original/`）已于 2026-06-06 移至工作区 `99_Archive/15_journal-audit_v1_original/`。**
+> 本文件仅保留迭代脉络作历史参考。当前生产代码在仓库根目录 `app.py` + `modules/` + `components/`。
 
 
 ## [V1.0] - 基础规则筛查
