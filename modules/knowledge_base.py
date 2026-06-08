@@ -212,6 +212,107 @@ def delete_llm_profile(profile_id: str) -> bool:
         return True
 
 
+# ── 列名学习库：沉淀用户确认的「源列名 → 标准列」，让匹配越用越聪明 ──
+# 存 ~/.audit_tool/column_aliases.json。key 为归一化后的源列名（聚合空格/标点变体），
+# value 记录候选标准列及确认频次，冲突时高频者胜出。
+
+
+def _column_aliases_path() -> Path:
+    return _root() / "column_aliases.json"
+
+
+def _column_aliases_lock_path() -> Path:
+    return _root() / ".column_aliases.lock"
+
+
+def _norm_col(text: str) -> str:
+    """源列名归一化：去空白/标点 + 小写。
+
+    必须与 ingestion._normalize 保持一致，否则学过的别名查不回来；
+    由 test_normalization_matches_ingestion 跨模块锁死。
+    """
+    return "".join(ch for ch in str(text).lower() if ch.isalnum())
+
+
+def _load_column_aliases() -> dict[str, Any]:
+    data = _read_json_file(_column_aliases_path(), {})
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def _save_column_aliases(data: dict[str, Any]) -> None:
+    path = _column_aliases_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
+    try:
+        path.chmod(0o600)
+    except Exception:
+        pass
+
+
+def record_column_mappings(std_to_source: dict[str, str]) -> int:
+    """沉淀用户确认的列映射（标准列 -> 源列），返回有效记录条数。
+
+    跳过：源列为空、源列归一化后等于标准名（精确命中无沉淀价值）。
+    重复确认累加频次；同一源列映射到不同标准列时各自计数，读取时取高频。
+    """
+    recorded = 0
+    today = str(date.today())
+    with file_lock(_column_aliases_lock_path(), exclusive=True):
+        data = _load_column_aliases()
+        for std_name, source in std_to_source.items():
+            std_name = str(std_name).strip()
+            source = str(source or "").strip()
+            if not std_name or not source:
+                continue
+            norm = _norm_col(source)
+            if not norm or norm == _norm_col(std_name):
+                continue
+            entry = data.get(norm)
+            if not isinstance(entry, dict):
+                entry = {"example": source, "candidates": {}}
+                data[norm] = entry
+            entry["example"] = source
+            candidates = entry.setdefault("candidates", {})
+            cand = candidates.get(std_name)
+            if not isinstance(cand, dict):
+                cand = {"count": 0, "last_used": today}
+                candidates[std_name] = cand
+            cand["count"] = int(cand.get("count", 0)) + 1
+            cand["last_used"] = today
+            recorded += 1
+        if recorded:
+            _save_column_aliases(data)
+    return recorded
+
+
+def learned_column_aliases() -> dict[str, str]:
+    """返回 {归一化源列名: 标准列名}，每个源列取确认频次最高的标准列（并列取最近）。
+
+    供 ingestion 匹配器作为高置信层注入；读取失败时返回空 dict（不阻断上传）。
+    """
+    data = _load_column_aliases()
+    out: dict[str, str] = {}
+    for norm, entry in data.items():
+        if not isinstance(entry, dict):
+            continue
+        candidates = entry.get("candidates", {})
+        if not isinstance(candidates, dict) or not candidates:
+            continue
+        best = max(
+            candidates.items(),
+            key=lambda kv: (
+                int(kv[1].get("count", 0)) if isinstance(kv[1], dict) else 0,
+                kv[1].get("last_used", "") if isinstance(kv[1], dict) else "",
+            ),
+        )
+        out[str(norm)] = best[0]
+    return out
+
+
 def _load() -> list[dict]:
     data = _read_json_file(_library_path(), [])
     if not isinstance(data, list):

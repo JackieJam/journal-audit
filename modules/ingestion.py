@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import IO, Literal
 
 import pandas as pd
+from rapidfuzz import fuzz
 
 # ── 标准字段定义（三档分级 + 模糊匹配候选）────────────────────
 # 每个标准列名对应一组候选（首项就是标准名本身）。匹配时不区分大小写、
@@ -117,6 +118,14 @@ NO_COLUMN_SENTINEL = "(无此列)"
 # ─────────────────────────────────────────────
 
 
+@dataclass(frozen=True)
+class ColumnMatch:
+    """单个标准列的匹配结果，带置信度与命中方式，供 UI 标记低置信项。"""
+    source: str                                           # 命中的源列名
+    score: float                                          # 0~1 置信度
+    method: str                                           # exact | alias | contains | fuzzy
+
+
 @dataclass
 class DetectionResult:
     """探测阶段的结果，用于驱动 UI 映射。"""
@@ -124,13 +133,20 @@ class DetectionResult:
     suggested_mapping: dict[str, str]                     # 标准列 -> 源列（无匹配则不在 dict 内）
     file_label: str = ""                                  # 用于 UI 显示
     sample: pd.DataFrame = field(default_factory=pd.DataFrame)
+    mapping_matches: dict[str, ColumnMatch] = field(default_factory=dict)  # 标准列 -> 匹配详情（含置信度）
 
 
-def detect_columns(sources: list[str | Path | IO]) -> DetectionResult:
+def detect_columns(
+    sources: list[str | Path | IO],
+    learned_aliases: dict[str, str] | None = None,
+) -> DetectionResult:
     """读取文件表头并给出建议映射。
 
     多文件场景下会以「并集」形式展示所有源列，建议映射按"任一文件出现即采纳"。
     后续 load_files() 用同一份 mapping 处理所有文件。
+
+    learned_aliases: {归一化源列名 -> 标准列名}，由调用方从经验库取得后注入。
+    ingestion 保持纯函数、不直接依赖 knowledge_base，便于离线测试。
     """
     all_source_cols: list[str] = []
     sample_frames: list[pd.DataFrame] = []
@@ -144,7 +160,8 @@ def detect_columns(sources: list[str | Path | IO]) -> DetectionResult:
                 all_source_cols.append(col)
         labels.append(_source_label(src))
 
-    suggested = _suggest_mapping(all_source_cols)
+    matches = suggest_mapping_with_confidence(all_source_cols, learned=learned_aliases)
+    suggested = {std: m.source for std, m in matches.items()}
     sample_df = sample_frames[0] if sample_frames else pd.DataFrame()
 
     return DetectionResult(
@@ -152,6 +169,7 @@ def detect_columns(sources: list[str | Path | IO]) -> DetectionResult:
         suggested_mapping=suggested,
         file_label=" / ".join(labels),
         sample=sample_df,
+        mapping_matches=matches,
     )
 
 
@@ -216,25 +234,100 @@ def summarize_years(df_unified: pd.DataFrame) -> list[dict]:
 # ─────────────────────────────────────────────
 
 
+# ── 分层匹配阈值 ────────────────────────────────────────────
+# 维护负担下沉到智能层：别名表只需留最常见变体，长尾交给子串/模糊匹配。
+# 阈值保守，宁可漏匹配让人工补，也不能把核心金额列误映射（可审计 / 风险可见）。
+_LEARNED_SCORE = 0.97        # 学习库命中：用户曾确认过，仅次于标准名精确(1.0)，高于别名
+_ALIAS_SCORE = 0.95          # 别名精确命中：高但低于标准名精确，提示这是别名
+_CONTAIN_BASE = 0.80         # 子串包含基准分（再按长度比例加成到 0.80~0.95）
+_FUZZY_ACCEPT = 0.80         # 模糊命中可接受的最低分（rapidfuzz ratio / 100）
+_MIN_CONTAIN_LEN = 2         # 子串命中要求较短侧 >= 2 字，避免单字误命中
+
+# 标准列声明顺序：并列分时让核心列（声明在前）优先认领源列。
+_STD_ORDER: dict[str, int] = {c.name: i for i, c in enumerate(STANDARD_COLUMNS)}
+
+
 def _normalize(text: str) -> str:
     """模糊匹配用：去空白 / 标点 / 大小写。"""
     return "".join(ch for ch in str(text).lower() if ch.isalnum())
 
 
-def _suggest_mapping(source_columns: list[str]) -> dict[str, str]:
-    """对每个标准列在 source_columns 中找最佳匹配（精确 > 别名）。"""
-    norm_source = {_normalize(col): col for col in source_columns}
-    suggested: dict[str, str] = {}
+def _score_candidate(std: StandardColumn, src_norm: str) -> tuple[float, str]:
+    """给单个标准列对单个（已归一化的）源列打分，返回 (分数, 命中方式)。
 
+    分层：标准名精确(1.0) > 别名精确(0.95) > 子串包含(0.80~0.95) > 模糊(rapidfuzz)。
+    """
+    best_score = 0.0
+    best_method = "fuzzy"
+    candidates = (std.name, *std.aliases)
+    for idx, cand in enumerate(candidates):
+        cand_norm = _normalize(cand)
+        if not cand_norm:
+            continue
+        # 精确命中（标准名 / 别名）直接返回，无需再比
+        if src_norm == cand_norm:
+            return (1.0, "exact") if idx == 0 else (_ALIAS_SCORE, "alias")
+        # 子串包含：较短侧 >= 2 字，按长度比例给 0.80~0.95
+        shorter, longer = sorted((src_norm, cand_norm), key=len)
+        if len(shorter) >= _MIN_CONTAIN_LEN and shorter in longer:
+            score = _CONTAIN_BASE + 0.15 * (len(shorter) / len(longer))
+            if score > best_score:
+                best_score, best_method = score, "contains"
+        # 模糊：字符级编辑距离相似度
+        ratio = fuzz.ratio(src_norm, cand_norm) / 100.0
+        if ratio > best_score:
+            best_score, best_method = ratio, "fuzzy"
+    return best_score, best_method
+
+
+def suggest_mapping_with_confidence(
+    source_columns: list[str],
+    learned: dict[str, str] | None = None,
+) -> dict[str, ColumnMatch]:
+    """对每个标准列在 source_columns 中找最佳匹配，带置信度与冲突消解。
+
+    Args:
+        source_columns: 源文件实际列名。
+        learned: {归一化源列名 -> 标准列名}，来自经验库的历史确认（高置信层）。
+                 标准名精确命中(1.0)仍优先于学习项(0.97)，保证真实标准列不被错误学习项抢走。
+
+    冲突消解：一个源列最多被一个标准列认领；按分数降序贪心分配，
+    并列分时核心列（声明在前）优先，保证结果确定且可复现。
+    """
+    learned = learned or {}
+    norm_source = {col: _normalize(col) for col in source_columns}
+
+    claims: list[tuple[float, int, str, str, str]] = []  # (score, std_order, std_name, src, method)
     for std in STANDARD_COLUMNS:
-        candidates = (std.name, *std.aliases)
-        for cand in candidates:
-            key = _normalize(cand)
-            if key in norm_source:
-                suggested[std.name] = norm_source[key]
-                break
+        for src in source_columns:
+            score, method = _score_candidate(std, norm_source[src])
+            if score >= _FUZZY_ACCEPT:
+                claims.append((score, _STD_ORDER[std.name], std.name, src, method))
 
-    return suggested
+    # 学习库层：用户历史确认过的映射，作为高置信候选加入竞争
+    for src in source_columns:
+        std_name = learned.get(norm_source[src])
+        if std_name and std_name in STANDARD_COLUMNS_BY_NAME:
+            claims.append((_LEARNED_SCORE, _STD_ORDER[std_name], std_name, src, "learned"))
+
+    # 高分优先；并列时按标准列声明顺序，再按源列名，保证确定性
+    claims.sort(key=lambda c: (-c[0], c[1], c[3]))
+
+    used_std: set[str] = set()
+    used_src: set[str] = set()
+    result: dict[str, ColumnMatch] = {}
+    for score, _order, std_name, src, method in claims:
+        if std_name in used_std or src in used_src:
+            continue
+        result[std_name] = ColumnMatch(source=src, score=round(score, 4), method=method)
+        used_std.add(std_name)
+        used_src.add(src)
+    return result
+
+
+def _suggest_mapping(source_columns: list[str]) -> dict[str, str]:
+    """向后兼容：仅返回 标准列 -> 源列 名称映射（丢弃置信度）。"""
+    return {std: m.source for std, m in suggest_mapping_with_confidence(source_columns).items()}
 
 
 def _source_label(src) -> str:
