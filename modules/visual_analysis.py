@@ -17,6 +17,7 @@ from config.accounts import (
     DEFAULT_ADJUSTMENT_KEYWORDS,
 )
 from modules.account_classifier import (
+    BALANCE_SHEET_SIDE,
     CAT_AP,
     CAT_AP_ACCRUAL,
     CAT_AR,
@@ -941,6 +942,136 @@ def build_ap_accrual_supplier_share_from_work(
     sort_col = result["金额"].abs() if direction == "net" else result["金额"]
     result = result.assign(_sort=sort_col).sort_values("_sort", ascending=False)
     return result.drop(columns=["_sort"]).head(top_n).reset_index(drop=True)
+
+
+# ─────────────────────────────────────────────
+# 通用「科目类别月度变动」引擎（资产负债分析页用）
+#
+# 序时账是流量数据：每行是借贷发生额，不是余额。这里按科目类别聚合
+# 月度借/贷发生额与净变动，净变动方向按资产/负债大类约定取符号
+# （资产借增→净=借-贷；负债/权益贷增→净=贷-借），不做余额推算。
+# 一套参数化引擎覆盖全部资产负债类别，避免逐类别复制。
+# ─────────────────────────────────────────────
+
+
+def _category_rows(work: pd.DataFrame, category: str) -> pd.DataFrame:
+    work = ensure_analysis_columns(work)
+    return work[work["_acct_category"].eq(category)]
+
+
+def _net_change(debit: float, credit: float, category: str) -> float:
+    """按大类方向给净变动符号：资产借增、负债/权益贷增。"""
+    if BALANCE_SHEET_SIDE.get(category) == "资产":
+        return debit - credit
+    return credit - debit
+
+
+def build_category_monthly_movement_from_work(
+    work: pd.DataFrame, category: str
+) -> pd.DataFrame:
+    """某科目类别的月度借/贷发生额与净变动（1~12 月齐全）。"""
+    rows_src = _category_rows(work, category)
+    rows: list[dict] = []
+    for month in range(1, 13):
+        m = rows_src[rows_src["_month"] == month]
+        debit = float(m["_debit_abs"].sum())
+        credit = float(m["_credit_abs"].sum())
+        rows.append({
+            "月份": month,
+            "借方发生额": debit,
+            "贷方发生额": credit,
+            "净变动": _net_change(debit, credit, category),
+        })
+    return pd.DataFrame(rows)
+
+
+def build_category_entry_top10_from_work(
+    work: pd.DataFrame,
+    category: str,
+    month: int,
+    direction: str,
+    top_n: int | None = None,
+) -> pd.DataFrame:
+    """某类别指定月份/方向（debit/credit/net）的全量分录，供点选下钻。"""
+    detail = _category_rows(work, category)
+    detail = detail[detail["_month"] == int(month)].copy()
+
+    if direction == "debit":
+        detail = detail[detail["_dc"] == "S"].copy()
+        amount_label = "借方发生额"
+        detail[amount_label] = detail["_debit_abs"]
+    elif direction == "credit":
+        detail = detail[detail["_dc"] == "H"].copy()
+        amount_label = "贷方发生额"
+        detail[amount_label] = detail["_credit_abs"]
+    elif direction == "net":
+        amount_label = "净变动影响"
+        # 资产：借为正、贷为负；负债/权益反之
+        sign = 1.0 if BALANCE_SHEET_SIDE.get(category) == "资产" else -1.0
+        detail[amount_label] = sign * (detail["_debit_abs"] - detail["_credit_abs"])
+    else:
+        return pd.DataFrame()
+
+    if detail.empty:
+        return pd.DataFrame()
+
+    detail = detail.sort_values("_amount_abs", ascending=False)
+    if top_n:
+        detail = detail.head(top_n)
+    return _entry_display_columns(detail, amount_label)
+
+
+def build_category_account_breakdown_from_work(
+    work: pd.DataFrame,
+    category: str,
+    month: int | None = None,
+    top_n: int | None = None,
+) -> pd.DataFrame:
+    """某类别下各科目的借/贷发生额、净变动与占比（集中度分析），按净变动绝对值降序。"""
+    rows_src = _category_rows(work, category)
+    if month is not None:
+        rows_src = rows_src[rows_src["_month"] == int(month)]
+    if rows_src.empty:
+        return pd.DataFrame(columns=["科目编号", "科目名称", "借方发生额", "贷方发生额", "净变动", "占比"])
+
+    grouped_rows: list[dict] = []
+    for code, grp in rows_src.groupby("_acct"):
+        debit = float(grp["_debit_abs"].sum())
+        credit = float(grp["_credit_abs"].sum())
+        name = next((n for n in grp["_account_name"].astype(str) if n and n != "nan"), "")
+        grouped_rows.append({
+            "科目编号": str(code),
+            "科目名称": name,
+            "借方发生额": debit,
+            "贷方发生额": credit,
+            "净变动": _net_change(debit, credit, category),
+        })
+
+    result = pd.DataFrame(grouped_rows)
+    total_abs = result["净变动"].abs().sum()
+    result["占比"] = result["净变动"].abs() / total_abs if total_abs else 0.0
+    result = result.reindex(
+        result["净变动"].abs().sort_values(ascending=False).index
+    ).reset_index(drop=True)
+    return result.head(top_n) if top_n else result
+
+
+def build_category_account_entry_top10_from_work(
+    work: pd.DataFrame,
+    category: str,
+    account_code: str,
+    top_n: int | None = None,
+) -> pd.DataFrame:
+    """某类别下指定科目编号的全量分录，供集中度图点选下钻。"""
+    detail = _category_rows(work, category)
+    detail = detail[detail["_acct"] == str(account_code).strip()].copy()
+    if detail.empty:
+        return pd.DataFrame()
+    detail["发生额"] = detail["_amount_raw"]
+    detail = detail.sort_values("_amount_abs", ascending=False)
+    if top_n:
+        detail = detail.head(top_n)
+    return _entry_display_columns(detail, "发生额")
 
 
 def build_adjustment_views(

@@ -47,6 +47,20 @@ def test_main_tabs_render_with_data(isolated_app_home, sample_data, tab):
     assert not at.exception
 
 
+def test_balance_sheet_subtab_renders(isolated_app_home, sample_data):
+    """资产负债内层页签渲染不报错（sample_data 含应收/应付，属资产负债类别）。"""
+    at = _load(
+        sample_data,
+        "序时账分析",
+        _sub_tab_top_name="可疑样本库筛选",
+        _sub_tab_inner_name="资产负债",
+        audit_year_sel=2023,
+    )
+    assert not at.exception
+    # 类别下拉应被渲染（至少有 应收/应付 两个资产负债类别）
+    assert any("科目类别" in s.label for s in at.selectbox), "资产负债页未渲染科目类别下拉"
+
+
 def test_upload_confirm_jumps_to_analysis(isolated_app_home, sample_data):
     """点「确认识别结果，进入分析页」应通过 _pending_tab 跳到分析页（active_tab==1）。
 

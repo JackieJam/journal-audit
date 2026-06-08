@@ -34,6 +34,15 @@ CAT_OTHER_RECEIVABLE = "其他应收"
 CAT_AP = "应付"
 CAT_AP_ACCRUAL = "应付暂估"
 CAT_OTHER_PAYABLE = "其他应付"
+# ── 资产负债表类别（流量分析用，非余额表）──
+CAT_CASH = "货币资金"
+CAT_INVENTORY = "存货"
+CAT_FIXED_ASSET = "固定资产"
+CAT_PREPAY = "预付账款"
+CAT_ADVANCE_RECEIPT = "预收账款"
+CAT_TAX_PAYABLE = "应交税费"
+CAT_LOAN = "借款"
+CAT_EQUITY = "权益"
 CAT_UNCATEGORIZED = "未分类"
 
 ALL_CATEGORIES: tuple[str, ...] = (
@@ -48,7 +57,40 @@ ALL_CATEGORIES: tuple[str, ...] = (
     CAT_AP,
     CAT_AP_ACCRUAL,
     CAT_OTHER_PAYABLE,
+    CAT_CASH,
+    CAT_INVENTORY,
+    CAT_FIXED_ASSET,
+    CAT_PREPAY,
+    CAT_ADVANCE_RECEIPT,
+    CAT_TAX_PAYABLE,
+    CAT_LOAN,
+    CAT_EQUITY,
     CAT_UNCATEGORIZED,
+)
+
+# ── 资产负债页：类别 -> 大类（资产/负债/权益）──
+# 决定月度净变动的符号约定：资产借增（净=借-贷），负债/权益贷增（净=贷-借）。
+BALANCE_SHEET_SIDE: dict[str, str] = {
+    CAT_CASH: "资产",
+    CAT_AR: "资产",
+    CAT_OTHER_RECEIVABLE: "资产",
+    CAT_PREPAY: "资产",
+    CAT_INVENTORY: "资产",
+    CAT_FIXED_ASSET: "资产",
+    CAT_AP: "负债",
+    CAT_AP_ACCRUAL: "负债",
+    CAT_OTHER_PAYABLE: "负债",
+    CAT_ADVANCE_RECEIPT: "负债",
+    CAT_TAX_PAYABLE: "负债",
+    CAT_LOAN: "负债",
+    CAT_EQUITY: "权益",
+}
+
+# 资产负债页可选类别，按 资产 → 负债 → 权益 的审计阅读顺序排列。
+BALANCE_SHEET_CATEGORIES: tuple[str, ...] = (
+    CAT_CASH, CAT_AR, CAT_OTHER_RECEIVABLE, CAT_PREPAY, CAT_INVENTORY, CAT_FIXED_ASSET,
+    CAT_AP, CAT_AP_ACCRUAL, CAT_OTHER_PAYABLE, CAT_ADVANCE_RECEIPT, CAT_TAX_PAYABLE, CAT_LOAN,
+    CAT_EQUITY,
 )
 
 
@@ -67,8 +109,19 @@ _PRIORITY_RULES: tuple[_Rule, ...] = (
     _Rule(CAT_AP_ACCRUAL, ("暂估", "GR/IR", "GRIR")),
     _Rule(CAT_OTHER_RECEIVABLE, ("其他应收",)),
     _Rule(CAT_OTHER_PAYABLE, ("其他应付",)),
+    # ── 资产负债类（关键词具体，放在通用损益规则之前，避免被"收入/成本/费用"误吞）──
+    _Rule(CAT_ADVANCE_RECEIPT, ("预收账款", "合同负债", "预收")),
+    _Rule(CAT_PREPAY, ("预付账款", "预付")),
+    _Rule(CAT_TAX_PAYABLE, ("应交税费", "应交税金", "应缴税费")),
     _Rule(CAT_AR, ("应收",)),
     _Rule(CAT_AP, ("应付",)),
+    _Rule(CAT_CASH, ("货币资金", "银行存款", "库存现金", "现金")),
+    _Rule(CAT_INVENTORY, ("存货", "原材料", "库存商品", "周转材料", "在产品", "产成品",
+                          "发出商品", "委托加工", "包装物", "低值易耗")),
+    _Rule(CAT_FIXED_ASSET, ("固定资产", "在建工程", "工程物资", "累计折旧")),
+    _Rule(CAT_LOAN, ("短期借款", "长期借款", "借款")),
+    _Rule(CAT_EQUITY, ("实收资本", "股本", "资本公积", "盈余公积", "未分配利润",
+                       "利润分配", "本年利润")),
     _Rule(CAT_TAX_SURCHARGE, ("税金及附加",)),
     _Rule(CAT_RD_EXPENSE, ("研发",)),
     _Rule(CAT_FINANCIAL_EXPENSE, ("财务费用", "汇兑损益")),
