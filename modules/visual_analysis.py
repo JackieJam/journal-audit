@@ -31,8 +31,6 @@ from modules.account_classifier import (
     CAT_TAX_SURCHARGE,
 )
 from modules.data_columns import (
-    add_analysis_columns,
-    REQUIRED_ANALYSIS_COLUMNS,
     ensure_analysis_columns,
 )
 
@@ -46,10 +44,6 @@ def _keyword_pattern(keywords: Iterable[str]) -> str:
 # All functions below import from there.
 
 
-def build_monthly_revenue_cost_view(df: pd.DataFrame) -> pd.DataFrame:
-    """收入/成本按借贷方向展开：正常方向和冲减方向都保留。"""
-    work = add_analysis_columns(df)
-    return build_monthly_revenue_cost_view_from_work(work)
 
 
 def build_income_cost_category_options_from_work(work: pd.DataFrame) -> list[str]:
@@ -133,9 +127,6 @@ def build_monthly_revenue_cost_view_from_work(
     return pd.DataFrame(rows)
 
 
-def build_customer_top10(df: pd.DataFrame, top_n: int | None = 10) -> pd.DataFrame:
-    work = add_analysis_columns(df)
-    return build_customer_top10_from_work(work, top_n=top_n)
 
 
 def build_customer_top10_from_work(work: pd.DataFrame, top_n: int | None = 10) -> pd.DataFrame:
@@ -216,74 +207,8 @@ def build_revenue_customer_material_summary_from_work(
     return grouped.head(top_n) if top_n else grouped
 
 
-def build_revenue_customer_material_matrix_from_work(
-    work: pd.DataFrame,
-    category: str | None = None,
-    top_customers: int = 12,
-    top_material_groups: int = 8,
-) -> pd.DataFrame:
-    """客户 + 物料组净收入矩阵，金额单位仍为原币。"""
-    summary = build_revenue_customer_material_summary_from_work(work, category)
-    if summary.empty:
-        return pd.DataFrame()
-
-    top_customer_names = (
-        summary.groupby("客户")["净收入"].sum().sort_values(ascending=False).head(top_customers).index
-    )
-    top_group_names = (
-        summary.groupby("物料组")["净收入"].sum().sort_values(ascending=False).head(top_material_groups).index
-    )
-    source = summary[summary["客户"].isin(top_customer_names) & summary["物料组"].isin(top_group_names)]
-    matrix = source.pivot_table(index="客户", columns="物料组", values="净收入", aggfunc="sum", fill_value=0)
-    matrix["合计"] = matrix.sum(axis=1)
-    matrix = matrix.sort_values("合计", ascending=False).reset_index()
-    return matrix
 
 
-def build_revenue_customer_monthly_focus_from_years(
-    year_map: dict[int, pd.DataFrame],
-    category: str | None = None,
-    top_customers: int = 20,
-) -> pd.DataFrame:
-    """客户月度收入波动表：突出同比、环比和异常方向收入。"""
-    frames: list[pd.DataFrame] = []
-    for year, df_year in sorted(year_map.items()):
-        work = add_analysis_columns(df_year)
-        revenue = _revenue_rows(work, category)
-        revenue = revenue[revenue["_customer_display"] != "未维护"].copy()
-        if revenue.empty:
-            continue
-        grouped = revenue.groupby(["_customer_display", "_month"], dropna=False).agg(
-            收入H影响=("_amount_raw", lambda x: float(x[revenue.loc[x.index, "_dc"] == "H"].sum())),
-            收入S影响=("_amount_raw", lambda x: float(x[revenue.loc[x.index, "_dc"] == "S"].sum())),
-            凭证数=("凭证编号", "nunique"),
-        ).reset_index()
-        grouped = grouped.rename(columns={"_customer_display": "客户", "_month": "月份"})
-        grouped["年份"] = int(year)
-        grouped["净收入"] = -(grouped["收入H影响"] + grouped["收入S影响"])
-        frames.append(grouped)
-
-    if not frames:
-        return pd.DataFrame(columns=["年份", "月份", "客户", "净收入", "同比变动率", "环比变动率", "收入S影响", "凭证数", "关注点"])
-
-    all_rows = pd.concat(frames, ignore_index=True)
-    top_customer_names = (
-        all_rows.groupby("客户")["净收入"].sum().sort_values(ascending=False).head(top_customers).index
-    )
-    all_rows = all_rows[all_rows["客户"].isin(top_customer_names)].copy()
-    all_rows = all_rows.sort_values(["客户", "年份", "月份"])
-    all_rows["环比基数"] = all_rows.groupby("客户")["净收入"].shift(1)
-    all_rows["同比基数"] = all_rows.groupby(["客户", "月份"])["净收入"].shift(1)
-    all_rows["环比变动率"] = _safe_ratio_delta(all_rows["净收入"], all_rows["环比基数"])
-    all_rows["同比变动率"] = _safe_ratio_delta(all_rows["净收入"], all_rows["同比基数"])
-    all_rows["关注点"] = [
-        _revenue_focus_label(month, income_s, yoy, mom)
-        for month, income_s, yoy, mom in zip(
-            all_rows["月份"], all_rows["收入S影响"], all_rows["同比变动率"], all_rows["环比变动率"], strict=False
-        )
-    ]
-    all_rows["_sort_abs"] = all_rows[["同比变动率", "环比变动率"]].abs().max(axis=1).fillna(0)
-    return all_rows.sort_values(["_sort_abs", "收入S影响", "净收入"], ascending=[False, False, False]).drop(columns=["_sort_abs", "环比基数", "同比基数"])
 
 
 def build_revenue_customer_monthly_focus_from_work_map(
@@ -372,10 +297,6 @@ def build_cost_material_account_summary_from_work(
     return grouped.head(top_n) if top_n else grouped
 
 
-def build_supplier_top10(df: pd.DataFrame, top_n: int | None = 10) -> pd.DataFrame:
-    """供应商 TopN，按 2202 应付账款贷方发生额排名。"""
-    work = add_analysis_columns(df)
-    return build_supplier_top10_from_work(work, top_n=top_n)
 
 
 def build_supplier_top10_from_work(work: pd.DataFrame, top_n: int | None = 10) -> pd.DataFrame:
@@ -440,14 +361,6 @@ def _entry_display_columns(detail: pd.DataFrame, amount_label: str) -> pd.DataFr
     })
 
 
-def build_customer_revenue_entry_top10(
-    df: pd.DataFrame,
-    customer: str,
-    top_n: int | None = None,
-) -> pd.DataFrame:
-    """指定客户的收入科目分录，默认返回全量匹配行。"""
-    work = add_analysis_columns(df)
-    return build_customer_revenue_entry_top10_from_work(work, customer, top_n=top_n)
 
 
 def build_customer_revenue_entry_top10_from_work(
@@ -633,14 +546,6 @@ def build_expense_entry_top10_from_work(
     return _entry_display_columns(detail, "费用发生额")
 
 
-def build_supplier_payable_entry_top10(
-    df: pd.DataFrame,
-    supplier: str,
-    top_n: int | None = None,
-) -> pd.DataFrame:
-    """指定供应商的应付账款分录，默认返回全量匹配行。"""
-    work = add_analysis_columns(df)
-    return build_supplier_payable_entry_top10_from_work(work, supplier, top_n=top_n)
 
 
 def build_supplier_payable_entry_top10_from_work(
@@ -911,37 +816,6 @@ def build_ap_accrual_entry_top10_from_work(
     return _entry_display_columns(detail, amount_label)
 
 
-def build_ap_accrual_supplier_share_from_work(
-    work: pd.DataFrame,
-    month: int,
-    direction: str,
-    top_n: int = 10,
-) -> pd.DataFrame:
-    """指定月份暂估借贷方向/净额对应供应商占比。"""
-    accrual = _ap_accrual_rows(work)
-    rows = accrual[(accrual["_month"] == month) & (accrual["_vendor_display"] != "未维护")].copy()
-    if rows.empty:
-        return pd.DataFrame(columns=["供应商", "金额", "占比"])
-
-    if direction == "credit":
-        rows = rows[rows["_dc"] == "H"].copy()
-        rows["金额"] = -rows["_credit_amount"]
-    elif direction == "debit":
-        rows = rows[rows["_dc"] == "S"].copy()
-        rows["金额"] = rows["_debit_amount"]
-    else:
-        rows["金额"] = -rows["_amount_raw"]
-
-    if rows.empty:
-        return pd.DataFrame(columns=["供应商", "金额", "占比"])
-
-    result = rows.groupby("_vendor_display", as_index=False)["金额"].sum()
-    result = result.rename(columns={"_vendor_display": "供应商"})
-    total = result["金额"].sum()
-    result["占比"] = result["金额"] / total if total else 0
-    sort_col = result["金额"].abs() if direction == "net" else result["金额"]
-    result = result.assign(_sort=sort_col).sort_values("_sort", ascending=False)
-    return result.drop(columns=["_sort"]).head(top_n).reset_index(drop=True)
 
 
 # ─────────────────────────────────────────────
@@ -1074,14 +948,6 @@ def build_category_account_entry_top10_from_work(
     return _entry_display_columns(detail, "发生额")
 
 
-def build_adjustment_views(
-    df: pd.DataFrame,
-    keywords: Iterable[str] = DEFAULT_ADJUSTMENT_KEYWORDS,
-    max_vouchers: int = 300,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """返回调账/冲销凭证摘要和对应全分录明细。"""
-    work = add_analysis_columns(df)
-    return build_adjustment_views_from_work(work, keywords=keywords, max_vouchers=max_vouchers)
 
 
 def build_adjustment_views_from_work(

@@ -18,19 +18,17 @@ def render_overview(*, financials: dict[int, Any], helpers: dict[str, Any]) -> N
         st.info("暂无财务数据。")
     else:
         overview_years = sorted(st.session_state.get("year_map", {}).keys())
-        unified_key = _unified_llm_key(overview_years, income_cost_category if 'income_cost_category' in locals() else "总计")
+        unified_key = _unified_llm_key(overview_years, "总计")
         unified_cached = st.session_state.audit_llm_analysis.get(unified_key, {})
         overview_analysis = (unified_cached.get("overview_analysis") or {}) if isinstance(unified_cached, dict) else {}
         financial_years = sorted(financials.keys())
-        latest_year = financial_years[-1]
-        f_sel = financials[latest_year]
 
         llm_col1, llm_col2 = st.columns(2)
         with llm_col1:
             st.markdown("#### 智能综合解析")
             st.caption("一键生成智能分析并加入疑点库。")
         with llm_col2:
-            _render_unified_generation_controls(income_cost_category if 'income_cost_category' in locals() else "总计")
+            _render_unified_generation_controls("总计")
 
         # ── 多年度趋势总览图 ──
         if len(financials) >= 1:

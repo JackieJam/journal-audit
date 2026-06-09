@@ -6,7 +6,6 @@ Streamlit 用 st.plotly_chart(fig, width="stretch") 渲染。
 
 from __future__ import annotations
 
-from typing import Any
 
 import pandas as pd
 import plotly.express as px
@@ -555,7 +554,6 @@ def monthly_pl_trend_chart(financials: dict[int, dict], year: int) -> go.Figure:
     month_labels = [f"{m}月" for m in months]
     rev = [f["monthly_revenue"].get(m, 0) / 1e4 for m in months]
     cost = [f["monthly_cost"].get(m, 0) / 1e4 for m in months]
-    gp = [f["monthly_gp"].get(m, 0) / 1e4 for m in months]
     margin = []
     for m in months:
         r = f["monthly_revenue"].get(m, 0)
