@@ -11,12 +11,15 @@ dependencies = [
     "socksio>=1.0",
     "chinese-calendar>=1.9",
     "xlsxwriter>=3.2",
+    "rapidfuzz>=3.14.5",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
 ]
 
 [tool.pytest.ini_options]
@@ -27,3 +30,25 @@ markers = [
     "integration: 跨模块集成测试",
 ]
 addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+# F=pyflakes（未使用 import/未定义名）、E/W=pep8、I=isort、UP=pyupgrade、B=bugbear
+select = ["F", "E", "W", "I", "UP", "B"]
+# E501 行宽交给格式化器；B008 在 streamlit 调用里常见，先放行
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.mypy]
+# 渐进式类型检查：先从核心 modules 起步，保持宽松，不阻断。
+python_version = "3.11"
+warn_unused_ignores = true
+ignore_missing_imports = true
+check_untyped_defs = false
+files = ["modules"]

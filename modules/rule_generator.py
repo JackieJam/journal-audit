@@ -6,15 +6,13 @@ LLM 规则校准模块：把统计画像 + 跨年发现 + 经验库推荐规则�
 from __future__ import annotations
 
 import json
-import os
-import time
 from pathlib import Path
 from typing import Any
 
 from openai import APIConnectionError, APITimeoutError, OpenAI
 
 from modules.json_utils import parse_json_dict
-from modules.llm_quota import record_llm_call
+from modules.llm_client import chat_with_retry
 
 
 SYSTEM_PROMPT = """你是一名有20年经验的企业内部审计专家，专注于序时账（总账明细账）的异常识别。
@@ -170,36 +168,32 @@ def generate_rules_config(
 请基于以上信息，为该公司生成校准后的规则配置 JSON。"""
 
     client = OpenAI(api_key=api_key, base_url=base_url, max_retries=3)
-    last_exc = None
-    for attempt in range(_LLM_MAX_RETRIES + 1):
-        try:
-            record_llm_call("rule_calibration")
-            response = client.chat.completions.create(
-                model=model,
-                max_tokens=3000,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.2,
-                timeout=_LLM_TIMEOUT_SECONDS,
-            )
-            raw = response.choices[0].message.content
-            return parse_json_dict(raw)
-        except (APITimeoutError, APIConnectionError) as exc:
-            last_exc = exc
-            if attempt < _LLM_MAX_RETRIES:
-                wait = _LLM_RETRY_BACKOFF_BASE ** attempt
-                time.sleep(wait)
-                continue
-            raise ConnectionError(
-                f"大模型连接失败（已重试 {_LLM_MAX_RETRIES} 次），请检查网络、Base URL 或模型服务状态。"
-            ) from exc
-        except Exception as exc:
-            last_exc = exc
-            break
-
-    raise RuntimeError(f"规则校准失败：{last_exc}") from last_exc
+    request_kwargs = {
+        "model": model,
+        "max_tokens": 3000,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.2,
+        "timeout": _LLM_TIMEOUT_SECONDS,
+    }
+    try:
+        response = chat_with_retry(
+            client,
+            request_kwargs,
+            operation="rule_calibration",
+            max_retries=_LLM_MAX_RETRIES,
+            backoff_base=_LLM_RETRY_BACKOFF_BASE,
+        )
+        raw = response.choices[0].message.content
+        return parse_json_dict(raw)
+    except (APITimeoutError, APIConnectionError) as exc:
+        raise ConnectionError(
+            f"大模型连接失败（已重试 {_LLM_MAX_RETRIES} 次），请检查网络、Base URL 或模型服务状态。"
+        ) from exc
+    except Exception as exc:
+        raise RuntimeError(f"规则校准失败：{exc}") from exc
 
 
 def _format_library_rules(rules: list[dict]) -> str:
@@ -221,3 +215,38 @@ def default_rules_config() -> dict[str, Any]:
     """从 config/default_rules.json 加载默认规则配置。"""
     path = Path(__file__).parent.parent / "config" / "default_rules.json"
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+# 跨年检测阈值不接受 LLM 校准：它们驱动 cross_year.py 的实际计算。
+# 若放任模型改写，会与"跨年发现→喂给校准"形成反馈环，使结果依赖操作顺序，
+# 损害审计可复现性。这些参数只由用户/默认值控制。
+CROSS_YEAR_PINNED_PARAMS: dict[str, tuple[str, ...]] = {
+    "cross_year_accrual": ("coverage_threshold", "match_window_days"),
+    "cross_year_revenue": ("dec_multiplier",),
+}
+
+
+def pin_cross_year_thresholds(cfg: dict, prior: dict | None = None) -> dict:
+    """把校准结果里的跨年检测阈值还原为用户当前值或默认值，斩断 LLM 反馈环。
+
+    就地修改并返回 ``cfg``。优先采用 ``prior``（用户当前 rules_config）中的值，
+    缺失时回落到 default_rules_config()。``enabled`` / ``rationale`` 不受影响。
+
+    同时整体保留 ``cross_year_detection`` 高级阈值块：LLM 不会生成该块，
+    若不保留，校准后会丢失用户自定义（或静默回默认）。
+    """
+    defaults = default_rules_config()
+    source = prior or defaults
+    for rule_key, params in CROSS_YEAR_PINNED_PARAMS.items():
+        if not isinstance(cfg.get(rule_key), dict):
+            continue
+        for pk in params:
+            if isinstance(source.get(rule_key), dict) and pk in source[rule_key]:
+                cfg[rule_key][pk] = source[rule_key][pk]
+            elif pk in defaults.get(rule_key, {}):
+                cfg[rule_key][pk] = defaults[rule_key][pk]
+    # 高级检测阈值块整体保留（LLM 不生成它）
+    cfg["cross_year_detection"] = dict(
+        source.get("cross_year_detection") or defaults.get("cross_year_detection", {})
+    )
+    return cfg

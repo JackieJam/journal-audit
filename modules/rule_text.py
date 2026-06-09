@@ -117,7 +117,7 @@ def rule_condition_lines(rule_key: str, rule_cfg: dict[str, Any]) -> list[str]:
         ]
     if rule_key == "reversal_pattern":
         return [
-            f"文本出现冲销/反记账关键词的凭证，会继续按大额和频繁两个方向筛查。",
+            "文本出现冲销/反记账关键词的凭证，会继续按大额和频繁两个方向筛查。",
             f"单笔冲销达到 {format_money(c.get('large_threshold', 0))} 的，直接作为大额冲销关注。",
             f"同一用户若至少冲销 {c.get('frequent_count', '—')} 笔，也会被归为频繁冲销用户。",
         ]

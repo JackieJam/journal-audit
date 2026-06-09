@@ -12,6 +12,8 @@ Tab 1 – 上传数据
 
 from __future__ import annotations
 
+import logging
+
 import streamlit as st
 import pandas as pd
 
@@ -22,8 +24,10 @@ from modules.ingestion import (
     load_files,
     summarize_years,
 )
-from modules import account_classifier
+from modules import account_classifier, knowledge_base
 from modules.account_classifier import ALL_CATEGORIES, CAT_UNCATEGORIZED
+
+logger = logging.getLogger(__name__)
 
 
 _TIER_LABELS = {
@@ -91,7 +95,9 @@ def _process_files(
     if detection_key not in st.session_state:
         with st.spinner("正在读取文件列名…"):
             try:
-                st.session_state[detection_key] = detect_columns(uploaded)
+                st.session_state[detection_key] = detect_columns(
+                    uploaded, learned_aliases=_safe_learned_aliases()
+                )
             except Exception as exc:
                 st.error(f"文件列名读取失败：{exc}")
                 return
@@ -190,6 +196,25 @@ def _render_mapping_form(detection, mapping: dict[str, str], file_signature: str
         by_tier[std.tier].append(std)
 
     options = [NO_COLUMN_SENTINEL, *detection.source_columns]
+    matches = getattr(detection, "mapping_matches", {}) or {}
+
+    fuzzy_flagged = sum(
+        1 for std in STANDARD_COLUMNS
+        if _is_low_confidence(matches.get(std.name), mapping.get(std.name))
+    )
+    learned_count = sum(
+        1 for std in STANDARD_COLUMNS
+        if _is_learned(matches.get(std.name), mapping.get(std.name))
+    )
+    if learned_count:
+        st.caption(
+            f"📚 其中 **{learned_count}** 个字段命中**经验库**（你以往确认过的列名映射，已自动套用）。"
+        )
+    if fuzzy_flagged:
+        st.caption(
+            f"⚠️ 其中 **{fuzzy_flagged}** 个字段是按列名相似度**模糊匹配**的（非精确命中），"
+            f"下方以 `≈ 模糊匹配` 标出，请重点核对后再解析。"
+        )
 
     for tier in ("core", "important", "auxiliary"):
         title, hint = _TIER_LABELS[tier]
@@ -205,10 +230,31 @@ def _render_mapping_form(detection, mapping: dict[str, str], file_signature: str
         with st.expander(f"{title}　{badge}", expanded=expanded):
             st.caption(hint)
             for std in cols_in_tier:
-                _render_single_mapping_row(std, options, mapping, file_signature)
+                _render_single_mapping_row(std, options, mapping, file_signature, matches.get(std.name))
 
 
-def _render_single_mapping_row(std, options: list[str], mapping: dict[str, str], file_signature: str) -> None:
+def _is_low_confidence(match, current: str | None) -> bool:
+    """该字段是否为「低置信模糊匹配」：仍采用自动建议、且命中方式为子串/模糊。"""
+    if match is None:
+        return False
+    if not current or current == NO_COLUMN_SENTINEL:
+        return False
+    # 用户已手动改成别的源列，则不再算"模糊建议"
+    if current != match.source:
+        return False
+    return match.method in ("contains", "fuzzy")
+
+
+def _is_learned(match, current: str | None) -> bool:
+    """该字段是否命中经验库：仍采用自动建议、且命中方式为 learned。"""
+    if match is None or not current or current == NO_COLUMN_SENTINEL:
+        return False
+    if current != match.source:
+        return False
+    return match.method == "learned"
+
+
+def _render_single_mapping_row(std, options: list[str], mapping: dict[str, str], file_signature: str, match=None) -> None:
     """单个标准列的下拉行。"""
     current = mapping.get(std.name, NO_COLUMN_SENTINEL)
     if current not in options:
@@ -218,6 +264,10 @@ def _render_single_mapping_row(std, options: list[str], mapping: dict[str, str],
     label = f"**{std.name}**"
     if std.tier == "core":
         label += "  :red[*核心*]"
+    if _is_learned(match, current):
+        label += "  :green[📚 经验库]"
+    elif _is_low_confidence(match, current):
+        label += f"  :orange[≈ 模糊匹配 {match.score:.0%}]"
 
     selected = st.selectbox(
         label,
@@ -296,11 +346,36 @@ def _run_parse(
         _clear_analysis_results()
         # 数据集被替换：强制重写重数据，避免「同结构不同内容」的重新上传被签名漏判。
         _autosave_current_project_state(data_changed=True)
+        # 列名沉淀：把用户最终确认的映射写入经验库，让下次匹配越用越聪明。
+        # 失败不可阻断解析（学习是增强项，非主流程）。
+        _record_column_mappings_safe(mapping)
         progress.progress(100, text="解析完成，下方可查看识别概览和科目体系配置。")
     except Exception as e:
         st.error(f"文件读取失败：{e}")
         st.stop()
     st.rerun()
+
+
+def _safe_learned_aliases() -> dict[str, str]:
+    """从经验库取学习别名；任何异常都降级为空，不阻断上传。"""
+    try:
+        return knowledge_base.learned_column_aliases()
+    except Exception:
+        return {}
+
+
+def _record_column_mappings_safe(mapping: dict[str, str]) -> None:
+    """沉淀本次确认的列映射到经验库（忽略未映射项）。失败静默，不阻断主流程。"""
+    confirmed = {
+        std: src for std, src in mapping.items()
+        if src and src != NO_COLUMN_SENTINEL
+    }
+    if not confirmed:
+        return
+    try:
+        knowledge_base.record_column_mappings(confirmed)
+    except Exception:
+        logger.warning("record_column_mappings failed; 学习数据未沉淀", exc_info=True)
 
 
 def _render_loaded_summary() -> None:

@@ -320,7 +320,7 @@ def sample_from_pool(
     -------
     list[dict] : 每个元素包含凭证编号、过账日期、金额、来源模块、风险等级等
     """
-    from modules.rule_engine import run_all_rules, hits_summary
+    from modules.rule_engine import run_all_rules
 
     groups = list(pool or [])
     if not groups:

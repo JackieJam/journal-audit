@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import functools
+import logging
 from typing import Any
 
 import streamlit as st
@@ -26,55 +27,28 @@ from components.styles import inject_global_css
 inject_global_css()
 
 # ── 模块导入 ──
-from modules.ingestion import load_files, summarize_years, detect_columns
-from modules import column_check
-from modules.profiler import build_profile
+from modules.data_columns import add_analysis_columns
 from modules.visual_analysis import (
-    add_analysis_columns,
     build_ap_accrual_monthly_view_from_work,
-    build_ap_accrual_entry_top10_from_work,
-    build_ap_accrual_supplier_comparison_from_work,
     build_adjustment_views_from_work,
-    build_expense_entry_top10_from_work,
-    build_cost_focus_entries_from_work,
-    build_income_cost_abnormal_entry_top10_from_work,
-    build_customer_revenue_entry_top10_from_work,
     build_customer_top10_from_work,
-    build_monthly_revenue_cost_entry_top10_from_work,
     build_monthly_revenue_cost_view_from_work,
-    build_other_receivable_entry_top10_from_work,
     build_other_receivable_monthly_view_from_work,
-    build_other_payable_entry_top10_from_work,
     build_other_payable_monthly_view_from_work,
-    build_revenue_focus_entries_from_work,
-    build_supplier_payable_entry_top10_from_work,
     build_supplier_top10_from_work,
 )
-from modules.cross_year import run_cross_year_analysis, findings_to_summary_text
-from modules.rule_generator import generate_rules_config, default_rules_config
-from modules.rule_engine import run_all_rules, hits_summary
-from modules.llm_verifier import verify_with_llm
-from modules.reporter import generate_report
 from modules import knowledge_base as kb
 from modules import candidate_pool as cp
 from modules import llm_config
 from modules.formatting import (
-    escape_html as _escape_html,
-    format_list as _format_list,
     format_money as _format_money,
-    format_multiplier as _format_multiplier,
-    format_percent as _format_percent,
     format_years as _format_years,
-    plain_value as _plain_value,
 )
 from components.chart_selection import (
-    parse_event_points as _parse_event_points,
     selected_ap_accrual_point as _selected_ap_accrual_point,
     selected_bar_label as _selected_bar_label,
     selected_bar_label_and_direction as _selected_bar_label_and_direction,
-    selected_dataframe_focus_row_index as _selected_dataframe_focus_row_index,
     selected_dataframe_row_index as _selected_dataframe_row_index,
-    selected_dataframe_row_indices as _selected_dataframe_row_indices,
     selected_expense_cross_year_point as _selected_expense_cross_year_point,
     selected_income_cost_abnormal_point as _selected_income_cost_abnormal_point,
     selected_monthly_metric_point as _selected_monthly_metric_point,
@@ -82,10 +56,6 @@ from components.chart_selection import (
 )
 from modules.rule_text import (
     collect_rule_changes as _collect_rule_changes,
-    format_param_value as _format_param_value,
-    generic_param_lines as _generic_param_lines,
-    rule_change_lines as _rule_change_lines,
-    rule_condition_lines as _rule_condition_lines,
     rule_counts as _rule_counts,
 )
 from components.llm_orchestration import (
@@ -95,26 +65,15 @@ from components.llm_orchestration import (
     unified_llm_key as _unified_llm_key,
 )
 from components.candidate_actions import (
-    CANDIDATE_TAG_OPTIONS,
-    amount_column_config as _amount_column_config,
-    detail_amount_series as _detail_amount_series,
     render_candidate_add_popover as _ca_render_candidate_add_popover,
     render_detail_with_actions as _ca_render_detail_with_actions,
-    render_focused_voucher_detail as _render_focused_voucher_detail,
-    reset_editor_state as _reset_editor_state,
-    resolve_focused_voucher as _resolve_focused_voucher,
-    style_selected_detail_rows as _style_selected_detail_rows,
 )
 from components.exports import (
-    dataframe_to_excel_bytes as _dataframe_to_excel_bytes,
     render_chart_title_with_download as _render_chart_title_with_download,
 )
 from components.cross_year_view import (
-    cross_year_evidence_rows as _cross_year_evidence_rows,
     cross_year_expense_table as _cross_year_expense_table,
-    cross_year_focus_text as _cross_year_focus_text,
     expense_summary_table as _expense_summary_table,
-    format_evidence_cell as _format_evidence_cell,
     render_cross_year_finding as _render_cross_year_finding,
     render_library_rules as _render_library_rules,
 )
@@ -127,27 +86,13 @@ from components.tabs.analysis import (
     render_analysis_tab,
     render_working_capital_main as _render_working_capital_main_impl,
 )
-from components.charts import (
-    monthly_trend_chart, amount_distribution_chart, voucher_type_pie,
-    profile_amount_percentile_table, profile_temporal_table, profile_benford_table,
-    month_end_heatmap, user_bar_chart, benford_first_digit_chart, cross_year_revenue_chart,
-    multi_year_financial_overview,
-    cross_year_findings_chart, rule_hit_bar, risk_level_pie,
-    cost_structure_chart, expense_breakdown_chart, cross_year_expense_compare_chart,
-    audit_monthly_revenue_cost_chart, customer_revenue_top_chart,
-    supplier_payables_top_chart, audit_income_cost_abnormal_chart,
-    ap_accrual_monthly_chart,
-    ap_accrual_supplier_share_chart,
-    other_receivable_monthly_chart,
-    other_payable_monthly_chart,
-)
 
 # ── 全局常量（来自 config/）──
 from config.constants import (
-    RULE_ORDER, RULE_META, PARAM_LABELS,
-    DEFAULT_LLM_CONFIG, PROFILES_VERSION, FINANCIALS_VERSION, AUDIT_CACHE_VERSION,
-    PROJECT_MEMORY_KEYS,
+    DEFAULT_LLM_CONFIG, AUDIT_CACHE_VERSION, PROJECT_MEMORY_KEYS,
 )
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -294,7 +239,8 @@ def _autosave_current_project_state(data_changed: bool = False) -> None:
         st.session_state.loaded_project_id = metadata["project_id"]
     except Exception:
         # 自动保存失败不应打断当前分析流程；手动保存时会显示具体错误。
-        pass
+        # 但必须留痕，避免用户数据丢失而无任何线索。
+        logger.warning("autosave (save_project_state) failed", exc_info=True)
 
 
 # 候选库写入入口预绑定项目自动保存回调，使调用签名与注入 helper key 维持不变。
@@ -442,7 +388,7 @@ def _clear_analysis_results():
     st.session_state.report_stats = {}
 
 
-def _require_loaded_data() -> None:
+def _require_loaded_data() -> bool:
     """Check if data is loaded. Returns True if OK, False if not."""
     if _has_project_payload() and _has_loaded_years():
         return True

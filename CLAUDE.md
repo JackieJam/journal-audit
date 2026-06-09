@@ -15,12 +15,14 @@ app.py                      # Streamlit 主入口（segmented_control 4 页签�
                             # 各页签 render 函数通过 **helpers 注入 app.py 私有 helper（仍在 app.py 命名空间执行）
 pyproject.toml              # 依赖（uv 管理）
 modules/
-  ingestion.py              # 文件加载 + 年份自动识别
+  ingestion.py              # 文件加载 + 年份自动识别 + 分层列名匹配（精确/别名/子串/rapidfuzz 模糊 + 经验库学习项注入，带置信度与冲突消解）
   column_check.py           # 列字段守卫：缺失必要字段则降级跳过并给出可审计提示
   data_columns.py           # 共享分析派生列补充（add_analysis_columns）
-  account_classifier.py     # 基于科目名称的自动分类器（CAT_AP/AR/REVENUE 等审计类别）
+  account_classifier.py     # 基于科目名称的自动分类器（损益类 + 资产负债类，含 BALANCE_SHEET_CATEGORIES/SIDE）
   profiler.py               # 单体统计画像（per year，@st.cache_data）
-  cross_year.py             # 跨年交叉稽核（七类异常，@st.cache_data，键含分类覆盖签名）
+  cross_year.py             # 跨年交叉稽核（七类异常，@st.cache_data，键含分类覆盖签名+阈值签名）
+                            # 预提/收入两类检测阈值已 config 化（coverage_threshold/dec_multiplier），由 rules_config 传入并参与缓存键
+                            # 这两个阈值不参与 LLM 校准（见 rule_generator.pin_cross_year_thresholds），避免「发现→校准→发现」反馈环
   visual_analysis.py        # Step 2 审计可视化数据准备（聚合视图）
   rule_generator.py         # LLM 规则校准（读 profile + 经验库）
   rule_engine.py            # 规则执行（从 rules_config 读参数，@st.cache_data）
@@ -52,9 +54,10 @@ components/
     analysis/               # Tab 1：序时账分析（已抽离为子包，render_analysis_tab 顶层只做守卫+画像生成+分发）
       tab.py                #   页签入口 render_analysis_tab（守卫/财务画像生成/顶层 3 子页签分发）
       _context.py           #   AnalysisContext：setup 阶段共享上下文 + helpers 字典，传给各内层子渲染
-      suspect_filter.py     #   可疑样本库筛选（年份/口径/KPI setup + 6 个内层 sub-tab 分发）
+      suspect_filter.py     #   可疑样本库筛选（年份/口径/KPI setup + 7 个内层 sub-tab 分发）
       income_cost.py        #   内层：收入成本    expense.py 内层：费用
       working_capital.py    #   内层：暂估往来 + render_working_capital_main（被 app.py 包装注入）
+      balance_sheet.py      #   内层：资产负债（通用「科目类别月度变动」引擎，只做发生额/净变动，非余额表）
       adjustment.py         #   内层：调账冲销 + render_adjustment_main（被 app.py 包装注入）
       cross_year.py         #   内层：跨年交叉稽核    profile.py 内层：统计画像
       overview.py           #   顶层：财务概况    pool.py 顶层：疑点库管理
@@ -86,6 +89,7 @@ SAP Period 13 = 年末关闭调整期，归入当年，在分析中单独标记�
 ### 经验库路径
 `~/.audit_tool/`（按用户隔离，路径由 `runtime_context.storage_root()` 决定）
 - `rule_library.json`：跨项目沉淀的有效规则
+- `column_aliases.json`：列名学习库——用户每次确认的「源列名→标准列」映射，让列名匹配越用越聪明（频次累计，冲突取高频）
 - `llm_profiles.json`：本机保存的 LLM 方案（不含 Key 明文，权限 0600）
 - `projects/<id>/`：各审计项目的持久化状态 + 自动保存
 

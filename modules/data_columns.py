@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from modules.account_classifier import auto_classify
+from modules.account_classifier import auto_classify, classify_dataframe
 
 
 def _account_text_col(df: pd.DataFrame) -> str | None:
@@ -25,8 +25,12 @@ def _safe_text(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.Series("", index=df.index)
 
 
-def _category_overrides() -> dict[str, str]:
-    """从 session_state 读取用户的科目分类覆盖；非 streamlit 环境返回空。"""
+def category_overrides() -> dict[str, str]:
+    """从 session_state 读取用户的科目分类覆盖；非 streamlit 环境返回空。
+
+    全项目唯一来源：cross_year / rule_engine 等模块统一从此处导入，
+    避免复制粘贴后只改一处导致行为漂移。
+    """
     try:
         import streamlit as st  # type: ignore
 
@@ -36,6 +40,13 @@ def _category_overrides() -> dict[str, str]:
     if isinstance(raw, dict):
         return {str(k).strip(): str(v).strip() for k, v in raw.items() if str(k).strip()}
     return {}
+
+
+def ensure_category(df: pd.DataFrame) -> pd.DataFrame:
+    """给 raw DataFrame 补 _acct_category 列（已存在则原样返回）。"""
+    if "_acct_category" in df.columns:
+        return df
+    return classify_dataframe(df, overrides=category_overrides())
 
 
 def _display_party(code: object, name: object) -> str:
@@ -93,7 +104,7 @@ def add_analysis_columns(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     # ── 自动分类 + 用户覆盖 ──
-    overrides = _category_overrides()
+    overrides = category_overrides()
     auto_cats = out["_account_name"].map(auto_classify)
     if overrides:
         manual = out["_acct"].map(overrides)

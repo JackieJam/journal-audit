@@ -17,7 +17,7 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 
-from config.accounts import AUTO_VOUCHER_TYPES, ACCOUNT_HIERARCHY
+from config.accounts import AUTO_VOUCHER_TYPES
 from modules.data_columns import add_analysis_columns
 from modules.visual_analysis import build_monthly_revenue_cost_view_from_work
 
@@ -187,7 +187,6 @@ def _temporal_patterns(df: pd.DataFrame) -> dict:
     # 凌晨录入（0-6点）— 仅当有录入时间列时
     night_count = 0
     if "录入时间" in df.columns:
-        import re
         time_mask = df["录入时间"].astype(str).str.match(r"^\d{2}:\d{2}:\d{2}$")
         hours = df.loc[time_mask, "录入时间"].astype(str).str[:2].astype(int)
         night_count = int((hours < 6).sum())
@@ -480,13 +479,6 @@ def build_financial_summary(df: pd.DataFrame, year: int) -> dict[str, Any]:
     def _sum_debit_normal(prefix: str) -> float:
         return _sum_by_acct4(prefix, "_debit_normal")
 
-    def _classify_related(text: str) -> str:
-        if "内部关联" in text:
-            return "内部关联方"
-        if "外部关联" in text:
-            return "外部关联方"
-        return "第三方"
-
     def _sum_pnl_by_mask(mask: pd.Series, category: str | None = None) -> float:
         rows = visual_work.loc[mask]
         if category:
@@ -735,9 +727,3 @@ def profiles_to_summary_text(profiles: dict[int, dict]) -> str:
             )
 
     return "\n".join(lines)
-
-
-def _avg_dict(d: dict) -> float:
-    if not d:
-        return 0.0
-    return sum(d.values()) / len(d)

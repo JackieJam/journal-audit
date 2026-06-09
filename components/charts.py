@@ -6,7 +6,6 @@ Streamlit 用 st.plotly_chart(fig, width="stretch") 渲染。
 
 from __future__ import annotations
 
-from typing import Any
 
 import pandas as pd
 import plotly.express as px
@@ -555,7 +554,6 @@ def monthly_pl_trend_chart(financials: dict[int, dict], year: int) -> go.Figure:
     month_labels = [f"{m}月" for m in months]
     rev = [f["monthly_revenue"].get(m, 0) / 1e4 for m in months]
     cost = [f["monthly_cost"].get(m, 0) / 1e4 for m in months]
-    gp = [f["monthly_gp"].get(m, 0) / 1e4 for m in months]
     margin = []
     for m in months:
         r = f["monthly_revenue"].get(m, 0)
@@ -1161,6 +1159,93 @@ def other_payable_monthly_chart(monthly_df: pd.DataFrame, year: int) -> go.Figur
         clickmode="event+select",
         height=430,
         margin=dict(t=85, b=45),
+    )
+    return fig
+
+
+def category_movement_monthly_chart(
+    monthly_df: pd.DataFrame, year: int, category: str, side: str = ""
+) -> go.Figure:
+    """资产负债类科目月度借/贷发生额双柱 + 净变动折线（通用，按类别复用）。
+
+    trace 顺序固定为 借方发生额(0) / 贷方发生额(1) / 净变动(2)，
+    与 selected_monthly_metric_point 的 {0:debit,1:credit,2:net} 对齐。
+    """
+    if monthly_df.empty:
+        return go.Figure().update_layout(title=f"暂无{category}数据")
+
+    month_labels = [f"{int(m)}月" for m in monthly_df["月份"]]
+    net_label = "净变动（增加为正）" + (f"·{side}口径" if side else "")
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="借方发生额",
+        x=month_labels,
+        y=monthly_df["借方发生额"] / 1e4,
+        marker_color="#2F5496",
+        opacity=0.86,
+        text=[f"{v/1e4:,.0f}万" if v else "" for v in monthly_df["借方发生额"]],
+        textposition="outside",
+    ))
+    fig.add_trace(go.Bar(
+        name="贷方发生额",
+        x=month_labels,
+        y=monthly_df["贷方发生额"] / 1e4,
+        marker_color="#C55A11",
+        opacity=0.86,
+        text=[f"{v/1e4:,.0f}万" if v else "" for v in monthly_df["贷方发生额"]],
+        textposition="outside",
+    ))
+    fig.add_trace(go.Scatter(
+        name=net_label,
+        x=month_labels,
+        y=monthly_df["净变动"] / 1e4,
+        mode="lines+markers",
+        line=dict(color="#548235", width=3),
+        marker=dict(size=7),
+        text=[f"{v/1e4:,.0f}万" for v in monthly_df["净变动"]],
+        textposition="top center",
+    ))
+    fig.add_hline(y=0, line_width=1, line_color="#666")
+    fig.update_layout(
+        title=dict(text=f"{year}年 {category} 月度借贷发生额与净变动（流量，非余额）", y=0.97),
+        yaxis_title="金额（万元，公司代码货币）",
+        barmode="group",
+        legend=dict(orientation="h", yanchor="bottom", y=1.05),
+        clickmode="event+select",
+        height=430,
+        margin=dict(t=85, b=45),
+    )
+    return fig
+
+
+def category_account_breakdown_chart(
+    breakdown_df: pd.DataFrame, title: str, top_n: int = 15
+) -> go.Figure:
+    """类别下各科目净变动横向条形图（集中度），点选可下钻该科目。"""
+    if breakdown_df.empty:
+        return go.Figure().update_layout(title=f"暂无{title}数据")
+
+    data = breakdown_df.head(top_n).iloc[::-1]
+    labels = [
+        f"{code} {name}".strip() for code, name in zip(data["科目编号"], data["科目名称"])
+    ]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="净变动",
+        x=data["净变动"] / 1e4,
+        y=labels,
+        orientation="h",
+        marker_color="#548235",
+        text=[f"{v/1e4:,.0f}万" for v in data["净变动"]],
+        textposition="outside",
+    ))
+    fig.add_vline(x=0, line_width=1, line_color="#666")
+    fig.update_layout(
+        title=dict(text=title, y=0.97),
+        xaxis_title="净变动（万元）",
+        clickmode="event+select",
+        height=max(320, 32 * len(data) + 120),
+        margin=dict(t=70, b=45, l=10),
     )
     return fig
 

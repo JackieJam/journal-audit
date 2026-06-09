@@ -13,6 +13,7 @@ from modules.visual_analysis import (
 
 from ._context import AnalysisContext
 from .adjustment import render_adjustment
+from .balance_sheet import render_balance_sheet
 from .cross_year import render_cross_year
 from .expense import render_expense
 from .income_cost import render_income_cost
@@ -30,7 +31,7 @@ def _render_inner_sub_tabs(ctx: AnalysisContext) -> None:
     疑点库管理页签与之同步——状态不一致比慢更危险（风险可见）。
     """
     # 用稳定 key 驱动，避免「动态 default + 无 key」导致切换时 widget 被重建、点击丢失。
-    SUB_TABS_INNER = ["收入成本", "费用", "暂估往来", "调账冲销", "跨年交叉稽核", "统计画像"]
+    SUB_TABS_INNER = ["收入成本", "费用", "暂估往来", "资产负债", "调账冲销", "跨年交叉稽核", "统计画像"]
     if "_sub_tab_inner_name" not in st.session_state:
         st.session_state._sub_tab_inner_name = SUB_TABS_INNER[st.session_state.get("_sub_tab_inner", 0)]
     active_inner = st.segmented_control("", SUB_TABS_INNER, key="_sub_tab_inner_name",
@@ -45,11 +46,13 @@ def _render_inner_sub_tabs(ctx: AnalysisContext) -> None:
         render_expense(ctx)
     if st.session_state._sub_tab_inner == 2:  # 暂估往来
         render_working_capital(ctx)
-    if st.session_state._sub_tab_inner == 3:  # 调账冲销
+    if st.session_state._sub_tab_inner == 3:  # 资产负债
+        render_balance_sheet(ctx)
+    if st.session_state._sub_tab_inner == 4:  # 调账冲销
         render_adjustment(ctx)
-    if st.session_state._sub_tab_inner == 4:  # 跨年交叉稽核
+    if st.session_state._sub_tab_inner == 5:  # 跨年交叉稽核
         render_cross_year(ctx)
-    if st.session_state._sub_tab_inner == 5:  # 统计画像
+    if st.session_state._sub_tab_inner == 6:  # 统计画像
         render_profile(ctx)
 
 

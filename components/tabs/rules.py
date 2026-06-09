@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import json
-from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
-from modules.rule_generator import generate_rules_config, default_rules_config
-from modules.rule_engine import run_all_rules, hits_summary
-from modules.llm_verifier import verify_with_llm
+from modules.rule_generator import (
+    generate_rules_config,
+    default_rules_config,
+    pin_cross_year_thresholds,
+)
 from modules.profiler import profiles_to_summary_text, financials_to_summary_text
 from modules.cross_year import findings_to_summary_text
 from modules import knowledge_base as kb
@@ -18,16 +18,27 @@ from modules import candidate_pool as cp
 from config.constants import RULE_ORDER, RULE_META, PARAM_LABELS, PARAM_HELP
 
 
+# 跨年检测阈值：这些参数真正驱动 cross_year.py 的计算（已 config 化）。
+# 用户改动后必须让已缓存的 cross_year_findings 失效，否则界面改了、检测不变。
+_CROSS_YEAR_DETECTION_PARAMS: dict[str, set[str]] = {
+    "cross_year_accrual": {"coverage_threshold", "match_window_days"},
+    "cross_year_revenue": {"dec_multiplier"},
+}
+
+
+def _invalidate_cross_year_if_needed(rule_key: str, param_key: str) -> None:
+    """若改动的是跨年检测阈值，清空 findings，使下次进分析页签重算。"""
+    if param_key in _CROSS_YEAR_DETECTION_PARAMS.get(rule_key, set()):
+        st.session_state.cross_year_findings = []
+
+
 def render_rules_tab(main_tab, **helpers):
     """Render the 规则管理 (Rule Management) tab."""
     _require_loaded_data = helpers["_require_loaded_data"]
     _can_use_llm = helpers["_can_use_llm"]
-    _resolve_api_key = helpers["_resolve_api_key"]
     _llm_model = helpers["_llm_model"]
     _llm_base_url = helpers["_llm_base_url"]
     _autosave_current_project_state = helpers["_autosave_current_project_state"]
-    _rule_counts = helpers["_rule_counts"]
-    _collect_rule_changes = helpers["_collect_rule_changes"]
     _render_library_rules = helpers["_render_library_rules"]
 
     if main_tab is not None:
@@ -73,6 +84,8 @@ def render_rules_tab(main_tab, **helpers):
                         model=_llm_model(),
                         base_url=_llm_base_url(),
                     )
+                    # 斩断反馈环：跨年检测阈值保持用户当前值，不被 LLM 改写
+                    cfg = pin_cross_year_thresholds(cfg, prior=st.session_state.rules_config)
                     st.session_state.rules_config = cfg
                     _autosave_current_project_state()
                     st.success("校准完成！参数已更新到下方各规则卡片中。")
@@ -373,17 +386,17 @@ def _render_rule_card_v2(rule_key: str, base_cfg: dict, is_builtin: bool = True)
         b1, b2 = st.columns(2)
         with b1:
             if is_builtin and base_rule:
-                if st.button(f"↩ 恢复默认", key=f"rule2_reset_{rule_key}", width="stretch"):
+                if st.button("↩ 恢复默认", key=f"rule2_reset_{rule_key}", width="stretch"):
                     cfg[rule_key] = base_rule.copy()
                     st.success(f"「{title}」已恢复默认参数。")
                     st.rerun()
             else:
-                if st.button(f"📋 克隆", key=f"rule2_clone_{rule_key}", width="stretch"):
+                if st.button("📋 克隆", key=f"rule2_clone_{rule_key}", width="stretch"):
                     _clone_rule(rule_key)
                     st.rerun()
         with b2:
             if not is_builtin:
-                if st.button(f"🗑️ 删除规则", key=f"rule2_del2_{rule_key}", width="stretch"):
+                if st.button("🗑️ 删除规则", key=f"rule2_del2_{rule_key}", width="stretch"):
                     _delete_rule(rule_key, title)
                     st.rerun()
 
@@ -509,12 +522,14 @@ def _render_single_param(cfg_section: dict, pk: str, pv, base_val, rule_key: str
         new_val = st.number_input(label, value=pv, step=1, key=f"rule_{rule_key}_{pk}", help=help_text)
         if new_val != pv:
             cfg_section[pk] = int(new_val)
+            _invalidate_cross_year_if_needed(rule_key, pk)
 
     elif isinstance(pv, float):
         new_val = st.number_input(label, value=pv, step=0.01, format="%.4f",
                                   key=f"rule_{rule_key}_{pk}", help=help_text)
         if new_val != pv:
             cfg_section[pk] = float(new_val)
+            _invalidate_cross_year_if_needed(rule_key, pk)
 
     elif isinstance(pv, list):
         text_val = st.text_area(
@@ -537,7 +552,6 @@ def _render_nested_dict(parent: dict, key: str, value: dict, rule_key: str, base
     for sub_key, sub_val in value.items():
         if not isinstance(sub_val, dict):
             continue
-        base_sub = base_val.get(sub_key, {})
 
         col_a, col_b, col_c = st.columns([3, 2, 2])
         with col_a:
