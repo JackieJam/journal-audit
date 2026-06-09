@@ -9,7 +9,7 @@ LLM 逐凭证核实模块。
 from __future__ import annotations
 
 import json
-import os
+import logging
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -18,6 +18,8 @@ from openai import APIConnectionError, APITimeoutError, OpenAI
 
 from modules.json_utils import parse_json_list
 from modules.llm_quota import record_llm_call
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -122,13 +124,17 @@ def verify_with_llm(
                     )
                     response_text = resp.choices[0].message.content
                     break
-                except (APITimeoutError, APIConnectionError) as exc:
+                except (APITimeoutError, APIConnectionError):
                     if attempt < max_retries:
                         wait = _LLM_RETRY_BACKOFF_BASE ** attempt
                         time.sleep(wait)
                         continue
                     break
                 except Exception:
+                    logger.warning(
+                        "LLM verify call failed (attempt %d/%d)",
+                        attempt + 1, max_retries + 1, exc_info=True,
+                    )
                     if attempt >= max_retries:
                         break
                     wait = _LLM_RETRY_BACKOFF_BASE ** attempt

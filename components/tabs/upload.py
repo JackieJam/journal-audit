@@ -12,6 +12,8 @@ Tab 1 – 上传数据
 
 from __future__ import annotations
 
+import logging
+
 import streamlit as st
 import pandas as pd
 
@@ -24,6 +26,8 @@ from modules.ingestion import (
 )
 from modules import account_classifier, knowledge_base
 from modules.account_classifier import ALL_CATEGORIES, CAT_UNCATEGORIZED
+
+logger = logging.getLogger(__name__)
 
 
 _TIER_LABELS = {
@@ -371,7 +375,7 @@ def _record_column_mappings_safe(mapping: dict[str, str]) -> None:
     try:
         knowledge_base.record_column_mappings(confirmed)
     except Exception:
-        pass
+        logger.warning("record_column_mappings failed; 学习数据未沉淀", exc_info=True)
 
 
 def _render_loaded_summary() -> None:

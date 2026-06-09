@@ -7,14 +7,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
 from typing import Any
 
 import pandas as pd
 from openai import APIConnectionError, APITimeoutError, OpenAI
 
 from modules.json_utils import parse_json_dict
-from modules.llm_quota import record_llm_call
+from modules.llm_client import chat_with_retry
 
 
 SYSTEM_PROMPT = """你是一名企业内部审计经理，正在基于序时账审计可视化结果做初步分析。
@@ -458,7 +457,6 @@ def _request_json_text(
 ) -> str:
     """调用 LLM 并返回响应文本，对连接/超时错误自动重试。"""
     response = None
-    last_exc: Exception | None = None
 
     request_kwargs: dict[str, Any] = {
         "model": model,
@@ -473,51 +471,42 @@ def _request_json_text(
     if force_json_object:
         request_kwargs["response_format"] = {"type": "json_object"}
 
-    for attempt in range(_LLM_MAX_RETRIES + 1):
-        try:
-            record_llm_call(operation)
-            response = client.chat.completions.create(**request_kwargs)
-            break
-        except APITimeoutError as exc:
-            last_exc = exc
-            if attempt < _LLM_MAX_RETRIES:
-                wait = _LLM_RETRY_BACKOFF_BASE ** attempt
-                time.sleep(wait)
-                continue
-            raise TimeoutError(
-                f"大模型请求在 {int(LLM_REQUEST_TIMEOUT_SECONDS)} 秒内未返回（已重试 {_LLM_MAX_RETRIES} 次），"
-                "请稍后重试，或检查当前模型 / Base URL 是否可用。"
-            ) from exc
-        except APIConnectionError as exc:
-            last_exc = exc
-            if attempt < _LLM_MAX_RETRIES:
-                wait = _LLM_RETRY_BACKOFF_BASE ** attempt
-                time.sleep(wait)
-                continue
-            raise ConnectionError(
-                f"大模型连接失败（已重试 {_LLM_MAX_RETRIES} 次），请检查网络、Base URL 或模型服务状态。"
-            ) from exc
-        except Exception as exc:
-            last_exc = exc
-            if force_json_object and "response_format" in str(exc):
-                # 移除 response_format 降级重试一次
-                fallback_kwargs: dict[str, Any] = {k: v for k, v in request_kwargs.items() if k != "response_format"}
-                fallback_kwargs["messages"] = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt + "\n\n再次强调：只输出严格合法的 JSON 对象。"},
-                ]
-                fallback_kwargs["temperature"] = 0.0
-                try:
-                    response = client.chat.completions.create(**fallback_kwargs)
-                    break
-                except Exception as fallback_exc:
-                    raise RuntimeError(f"大模型调用失败：{fallback_exc}") from fallback_exc
-            else:
-                raise RuntimeError(f"大模型调用失败：{exc}") from exc
+    try:
+        # 网络瞬时错误的退避重试由共享 helper 统一处理；
+        # 非网络异常（如 response_format 不支持）直接上抛，在下方做降级。
+        response = chat_with_retry(
+            client,
+            request_kwargs,
+            operation=operation,
+            max_retries=_LLM_MAX_RETRIES,
+            backoff_base=_LLM_RETRY_BACKOFF_BASE,
+        )
+    except APITimeoutError as exc:
+        raise TimeoutError(
+            f"大模型请求在 {int(LLM_REQUEST_TIMEOUT_SECONDS)} 秒内未返回（已重试 {_LLM_MAX_RETRIES} 次），"
+            "请稍后重试，或检查当前模型 / Base URL 是否可用。"
+        ) from exc
+    except APIConnectionError as exc:
+        raise ConnectionError(
+            f"大模型连接失败（已重试 {_LLM_MAX_RETRIES} 次），请检查网络、Base URL 或模型服务状态。"
+        ) from exc
+    except Exception as exc:
+        if force_json_object and "response_format" in str(exc):
+            # 移除 response_format 降级重试一次
+            fallback_kwargs: dict[str, Any] = {k: v for k, v in request_kwargs.items() if k != "response_format"}
+            fallback_kwargs["messages"] = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt + "\n\n再次强调：只输出严格合法的 JSON 对象。"},
+            ]
+            fallback_kwargs["temperature"] = 0.0
+            try:
+                response = client.chat.completions.create(**fallback_kwargs)
+            except Exception as fallback_exc:
+                raise RuntimeError(f"大模型调用失败：{fallback_exc}") from fallback_exc
+        else:
+            raise RuntimeError(f"大模型调用失败：{exc}") from exc
 
     if response is None:
-        if last_exc is not None:
-            raise RuntimeError(f"大模型调用失败：{last_exc}") from last_exc
         raise RuntimeError("大模型未返回响应对象，请检查当前模型服务是否可用。")
 
     choices = getattr(response, "choices", None)
