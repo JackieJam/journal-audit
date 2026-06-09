@@ -69,7 +69,9 @@ def render_analysis_tab(main_tab=None, **helpers):
             if needs_profiles or not st.session_state.cross_year_findings:
                 status.text("正在执行跨年交叉稽核...")
                 progress.progress(85)
-                findings = run_cross_year_analysis(st.session_state.year_map)
+                findings = run_cross_year_analysis(
+                    st.session_state.year_map, st.session_state.get("rules_config")
+                )
                 st.session_state.cross_year_findings = findings
             _autosave_current_project_state()
             status.text("数据分析完成")

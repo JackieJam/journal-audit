@@ -19,23 +19,8 @@ import streamlit as st
 from modules.account_classifier import (
     CAT_COST,
     CAT_REVENUE,
-    classify_dataframe,
 )
-from modules.data_columns import _pnl_category
-
-
-def _ensure_category(df: pd.DataFrame) -> pd.DataFrame:
-    """给 raw DataFrame 加 _acct_category 列；调用方拿到的可能不带分类。"""
-    if "_acct_category" in df.columns:
-        return df
-    try:
-        import streamlit as st  # type: ignore
-        overrides = st.session_state.get("account_category_overrides")
-        if not isinstance(overrides, dict):
-            overrides = {}
-    except Exception:
-        overrides = {}
-    return classify_dataframe(df, overrides=overrides)
+from modules.data_columns import _pnl_category, ensure_category
 
 
 @dataclass(frozen=True)
@@ -156,7 +141,7 @@ def _build_trade_voucher_facts(
 
     收入/成本判定基于 _acct_category（自动分类），不再依赖前缀清单。
     """
-    work = _ensure_category(df).copy()
+    work = ensure_category(df).copy()
     work["_acct4"] = work["总账科目"].astype(str).str[:4]
     work["_dc"] = work["借/贷标识"].astype(str).str.strip()
     work["_amount_abs"] = pd.to_numeric(work["凭证货币价值"], errors="coerce").fillna(0).abs()
@@ -200,7 +185,7 @@ def _build_trade_voucher_facts(
             "vendor": _display_party(grp, "供应商编号", "供应商科目：名称 1"),
             "user": _first_non_empty(grp["用户名"]) if "用户名" in grp.columns else "",
             "voucher_type": _first_non_empty(grp["凭证类型"]) if "凭证类型" in grp.columns else "",
-            "category": _pnl_category(account_name, acct4),
+            "category": _pnl_category(acct4, account_name),
             "revenue_amount": float(income_amount.get(vid, 0.0)),
             "cost_amount": float(cost_amount.get(vid, 0.0)),
             "income_line_indices": income_lines.get(vid, tuple()),
@@ -683,7 +668,7 @@ def rule_yearend_surge(df: pd.DataFrame, cfg: dict) -> RuleResult:
     if not c.get("enabled", True):
         return result
 
-    df = _ensure_category(df)
+    df = ensure_category(df)
     rev = df[df["_acct_category"].eq(CAT_REVENUE) & (df["借/贷标识"] == "H")].copy()
     if rev.empty:
         return result
@@ -1175,8 +1160,7 @@ RULE_DISPATCH = {
 
 def _base_rule_key(rule_key: str) -> str:
     """Strip _custom_N suffix to get base rule key."""
-    import re as _re
-    return _re.sub(r"_custom_\d+$", "", rule_key)
+    return re.sub(r"_custom_\d+$", "", rule_key)
 
 
 def _enabled_rule_keys(cfg: dict) -> list[str]:

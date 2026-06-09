@@ -20,7 +20,9 @@ modules/
   data_columns.py           # 共享分析派生列补充（add_analysis_columns）
   account_classifier.py     # 基于科目名称的自动分类器（损益类 + 资产负债类，含 BALANCE_SHEET_CATEGORIES/SIDE）
   profiler.py               # 单体统计画像（per year，@st.cache_data）
-  cross_year.py             # 跨年交叉稽核（七类异常，@st.cache_data，键含分类覆盖签名）
+  cross_year.py             # 跨年交叉稽核（七类异常，@st.cache_data，键含分类覆盖签名+阈值签名）
+                            # 预提/收入两类检测阈值已 config 化（coverage_threshold/dec_multiplier），由 rules_config 传入并参与缓存键
+                            # 这两个阈值不参与 LLM 校准（见 rule_generator.pin_cross_year_thresholds），避免「发现→校准→发现」反馈环
   visual_analysis.py        # Step 2 审计可视化数据准备（聚合视图）
   rule_generator.py         # LLM 规则校准（读 profile + 经验库）
   rule_engine.py            # 规则执行（从 rules_config 读参数，@st.cache_data）

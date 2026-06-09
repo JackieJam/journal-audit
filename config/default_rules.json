@@ -61,6 +61,18 @@
     "dec_multiplier": 1.8,
     "rationale": "12月收入超前11月均值1.8倍触发，配合年末突击确认规则双重验证"
   },
+  "cross_year_detection": {
+    "accrual_min_amount": 10000,
+    "accrual_mismatch_tolerance": 0.05,
+    "accrual_high_severity_amount": 1000000,
+    "balance_buildup_growth_ratio": 1.5,
+    "circular_large_amount": 500000,
+    "circular_match_ratio": 0.7,
+    "expense_spike_multiplier": 2.5,
+    "manual_entry_delta_threshold": 0.15,
+    "new_pair_count_threshold": 20,
+    "rationale": "跨年高级检测阈值集中管理（消除散落硬编码）：预提下限1万/不符容差5%/悬空高危线100万；期末余额累积1.5x；资金循环单笔50万、匹配度70%；费用突变2.5x；手工凭证占比上升15ppt；新科目组合20对。默认值与历史硬编码一致，不参与 LLM 校准。"
+  },
   "cash_pool": {
     "enabled": true,
     "keywords": ["资金池", "同名划转", "上划", "下拨"],
