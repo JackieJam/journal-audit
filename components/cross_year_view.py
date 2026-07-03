@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
 from modules.formatting import (
     format_money,

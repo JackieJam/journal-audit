@@ -14,7 +14,6 @@ from openai import APIConnectionError, APITimeoutError, OpenAI
 from modules.json_utils import parse_json_dict
 from modules.llm_client import chat_with_retry
 
-
 SYSTEM_PROMPT = """你是一名有20年经验的企业内部审计专家，专注于序时账（总账明细账）的异常识别。
 你的任务是：根据提供的公司账务统计画像，生成一套针对该公司的定制化审计抽样规则配置。
 

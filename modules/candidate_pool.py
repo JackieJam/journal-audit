@@ -263,7 +263,7 @@ def _classify_account(acct_code: str, acct_name: str = "") -> str:
     名称没命中（或为空）时，才回退到 ACCOUNT_CATEGORY_RULES 中的"营业外"/"资产相关"
     这两类（这两类基本只能通过编号识别）。
     """
-    from modules.account_classifier import auto_classify, CAT_UNCATEGORIZED
+    from modules.account_classifier import CAT_UNCATEGORIZED, auto_classify
 
     name_cat = auto_classify(acct_name) if acct_name else CAT_UNCATEGORIZED
     if name_cat != CAT_UNCATEGORIZED:
@@ -288,6 +288,107 @@ def _build_voucher_amount_map(df: pd.DataFrame) -> dict[str, float]:
         lambda x: pd.to_numeric(x, errors="coerce").fillna(0).abs().sum()
     )
     return {str(k): float(v) for k, v in amounts.items()}
+
+
+def voucher_ids_from_rule_results(rule_results: list[Any], size: int | None = None) -> list[str]:
+    """按规则命中优先级提取最终样本凭证号，包含关联凭证。"""
+    voucher_priority: dict[str, int] = {}
+    first_seen: dict[str, int] = {}
+
+    for rr in rule_results or []:
+        for hit in getattr(rr, "hits", []) or []:
+            priority = int(getattr(hit, "priority", 1) or 1)
+            hit_ids = [getattr(hit, "voucher_id", "")]
+            hit_ids.extend(getattr(hit, "related_voucher_ids", ()) or ())
+            for raw_vid in hit_ids:
+                vid = str(raw_vid).strip()
+                if not vid:
+                    continue
+                if vid not in first_seen:
+                    first_seen[vid] = len(first_seen)
+                voucher_priority[vid] = max(voucher_priority.get(vid, 0), priority)
+
+    ordered = sorted(
+        voucher_priority,
+        key=lambda v: (-voucher_priority[v], first_seen[v], v),
+    )
+    if size and size > 0:
+        return ordered[:size]
+    return ordered
+
+
+def _sample_amount(row: pd.Series) -> float:
+    for col in ("公司代码货币价值", "凭证货币价值"):
+        value = row.get(col)
+        amount = pd.to_numeric(value, errors="coerce")
+        if pd.notna(amount):
+            return float(amount)
+    return 0.0
+
+
+def samples_for_voucher_ids(
+    voucher_ids: set[str] | list[str] | tuple[str, ...],
+    df: pd.DataFrame,
+    pool: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """按凭证号从原始序时账展开样本明细。"""
+    if "凭证编号" not in df.columns:
+        return []
+
+    selected_voucher_ids = {str(v) for v in voucher_ids if str(v)}
+    if not selected_voucher_ids:
+        return []
+
+    groups = list(pool or [])
+    manual_vids = {
+        str(vid)
+        for group in groups
+        if group.get("status") == MANUAL_FINAL_STATUS
+        for vid in group.get("voucher_ids", [])
+    }
+
+    result_samples = []
+    matched_df = df[df["凭证编号"].astype(str).isin(selected_voucher_ids)].copy()
+
+    if "公司代码货币价值" in matched_df.columns:
+        matched_df["_sort_amount"] = pd.to_numeric(matched_df["公司代码货币价值"], errors="coerce").abs()
+    elif "凭证货币价值" in matched_df.columns:
+        matched_df["_sort_amount"] = pd.to_numeric(matched_df["凭证货币价值"], errors="coerce").abs()
+    else:
+        matched_df["_sort_amount"] = 0
+
+    matched_df = matched_df.sort_values("_sort_amount", ascending=False)
+
+    for _, row in matched_df.iterrows():
+        vid = str(row["凭证编号"])
+        is_manual = vid in manual_vids
+        amount = _sample_amount(row)
+        dc = str(row.get("借/贷标识", ""))
+        result_samples.append({
+            "凭证编号": vid,
+            "过账日期": str(row.get("过账日期", ""))[:10] if pd.notna(row.get("过账日期")) else "",
+            "凭证类型": str(row.get("凭证类型", "")),
+            "文本": str(row.get("文本", ""))[:60],
+            "总账科目": str(row.get("总账科目", "")),
+            "科目名称": str(row.get("总账科目：长文本", "")),
+            "借方金额": amount if dc == "S" else 0,
+            "贷方金额": amount if dc == "H" else 0,
+            "来源模块": _find_group_source(groups, vid),
+            "是否为人工直入": is_manual,
+        })
+
+    return result_samples
+
+
+def sample_from_rule_results(
+    rule_results: list[Any],
+    df: pd.DataFrame,
+    size: int | None = None,
+    pool: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """直接从已执行的规则结果生成最终样本，避免二次运行规则导致口径漂移。"""
+    voucher_ids = voucher_ids_from_rule_results(rule_results, size=size)
+    return samples_for_voucher_ids(voucher_ids, df, pool=pool)
 
 
 def sample_from_pool(
@@ -323,7 +424,7 @@ def sample_from_pool(
     from modules.rule_engine import run_all_rules
 
     groups = list(pool or [])
-    if not groups:
+    if not groups and method != "by_rule":
         return []
 
     # 收集候选池中所有活动凭证
@@ -354,26 +455,7 @@ def sample_from_pool(
         else:
             results = run_all_rules(df, rules_config)
 
-        # 收集命中的所有凭证
-        selected_voucher_ids = set()
-        for rr in results:
-            for hit in rr.hits:
-                selected_voucher_ids.add(hit.voucher_id)
-                if hasattr(hit, 'related_voucher_ids') and hit.related_voucher_ids:
-                    for rv in hit.related_voucher_ids:
-                        selected_voucher_ids.add(rv)
-
-        # 如果规则命中过多，按优先级排序取 top N
-        if size and len(selected_voucher_ids) > size:
-            # 构建凭证优先级映射
-            voucher_priority: dict[str, int] = {}
-            for rr in results:
-                for hit in rr.hits:
-                    vid = hit.voucher_id
-                    voucher_priority[vid] = max(voucher_priority.get(vid, 0), hit.priority)
-            selected_voucher_ids = set(
-                sorted(selected_voucher_ids, key=lambda v: voucher_priority.get(v, 0), reverse=True)[:size]
-            )
+        selected_voucher_ids = set(voucher_ids_from_rule_results(results, size=size))
     elif method == "by_account_weight":
         # ── 科目权重抽样 ──
         weights = account_weights or DEFAULT_ACCOUNT_WEIGHTS
@@ -579,47 +661,7 @@ def sample_from_pool(
     else:
         raise ValueError(f"不支持的抽样方式: {method}")
 
-    # 构建返回的样本明细
-    if "凭证编号" not in df.columns:
-        return []
-
-    # 收集人工直入的凭证
-    manual_vids = set()
-    for group in groups:
-        if group.get("status") == MANUAL_FINAL_STATUS:
-            manual_vids.update(group.get("voucher_ids", []))
-
-    # 按凭证在原始数据中定位
-    result_samples = []
-    matched_df = df[df["凭证编号"].astype(str).isin(selected_voucher_ids)].copy()
-
-    # 按金额绝对值降序排序
-    if "公司代码货币价值" in matched_df.columns:
-        matched_df["_sort_amount"] = pd.to_numeric(matched_df["公司代码货币价值"], errors="coerce").abs()
-    elif "凭证货币价值" in matched_df.columns:
-        matched_df["_sort_amount"] = pd.to_numeric(matched_df["凭证货币价值"], errors="coerce").abs()
-    else:
-        matched_df["_sort_amount"] = 0
-
-    matched_df = matched_df.sort_values("_sort_amount", ascending=False)
-
-    for _, row in matched_df.iterrows():
-        vid = str(row["凭证编号"])
-        is_manual = vid in manual_vids
-        result_samples.append({
-            "凭证编号": vid,
-            "过账日期": str(row.get("过账日期", ""))[:10] if pd.notna(row.get("过账日期")) else "",
-            "凭证类型": str(row.get("凭证类型", "")),
-            "文本": str(row.get("文本", ""))[:60],
-            "总账科目": str(row.get("总账科目", "")),
-            "科目名称": str(row.get("总账科目：长文本", "")),
-            "借方金额": float(row.get("公司代码货币价值", 0)) if str(row.get("借/贷标识", "")) == "S" else 0,
-            "贷方金额": float(row.get("公司代码货币价值", 0)) if str(row.get("借/贷标识", "")) == "H" else 0,
-            "来源模块": _find_group_source(groups, vid),
-            "是否为人工直入": is_manual,
-        })
-
-    return result_samples
+    return samples_for_voucher_ids(selected_voucher_ids, df, pool=groups)
 
 
 def _find_group_source(groups: list[dict], voucher_id: str) -> str:

@@ -10,8 +10,8 @@ import functools
 import logging
 from typing import Any
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
 # ── 页面配置（必须是第一个 st 调用）──
 st.set_page_config(
@@ -27,22 +27,9 @@ from components.styles import inject_global_css
 inject_global_css()
 
 # ── 模块导入 ──
-from modules.data_columns import add_analysis_columns
-from modules.visual_analysis import (
-    build_ap_accrual_monthly_view_from_work,
-    build_adjustment_views_from_work,
-    build_customer_top10_from_work,
-    build_monthly_revenue_cost_view_from_work,
-    build_other_receivable_monthly_view_from_work,
-    build_other_payable_monthly_view_from_work,
-    build_supplier_top10_from_work,
-)
-from modules import knowledge_base as kb
-from modules import candidate_pool as cp
-from modules import llm_config
-from modules.formatting import (
-    format_money as _format_money,
-    format_years as _format_years,
+from components.candidate_actions import (
+    render_candidate_add_popover as _ca_render_candidate_add_popover,
+    render_detail_with_actions as _ca_render_detail_with_actions,
 )
 from components.chart_selection import (
     selected_ap_accrual_point as _selected_ap_accrual_point,
@@ -54,9 +41,14 @@ from components.chart_selection import (
     selected_monthly_metric_point as _selected_monthly_metric_point,
     toggle_chart_selection as _toggle_chart_selection,
 )
-from modules.rule_text import (
-    collect_rule_changes as _collect_rule_changes,
-    rule_counts as _rule_counts,
+from components.cross_year_view import (
+    cross_year_expense_table as _cross_year_expense_table,
+    expense_summary_table as _expense_summary_table,
+    render_cross_year_finding as _render_cross_year_finding,
+    render_library_rules as _render_library_rules,
+)
+from components.exports import (
+    render_chart_title_with_download as _render_chart_title_with_download,
 )
 from components.llm_orchestration import (
     RecommendationDeps,
@@ -64,32 +56,42 @@ from components.llm_orchestration import (
     render_unified_generation_controls as _lo_render_unified_generation_controls,
     unified_llm_key as _unified_llm_key,
 )
-from components.candidate_actions import (
-    render_candidate_add_popover as _ca_render_candidate_add_popover,
-    render_detail_with_actions as _ca_render_detail_with_actions,
-)
-from components.exports import (
-    render_chart_title_with_download as _render_chart_title_with_download,
-)
-from components.cross_year_view import (
-    cross_year_expense_table as _cross_year_expense_table,
-    expense_summary_table as _expense_summary_table,
-    render_cross_year_finding as _render_cross_year_finding,
-    render_library_rules as _render_library_rules,
-)
 from components.sidebar import render_sidebar as _sidebar_render
-from components.tabs.upload import render_upload_tab
-from components.tabs.rules import render_rules_tab
-from components.tabs.sampling import render_sampling_tab
 from components.tabs.analysis import (
     render_adjustment_main as _render_adjustment_main_impl,
     render_analysis_tab,
     render_working_capital_main as _render_working_capital_main_impl,
 )
+from components.tabs.rules import render_rules_tab
+from components.tabs.sampling import render_sampling_tab
+from components.tabs.upload import render_upload_tab
 
 # ── 全局常量（来自 config/）──
 from config.constants import (
-    DEFAULT_LLM_CONFIG, AUDIT_CACHE_VERSION, PROJECT_MEMORY_KEYS,
+    AUDIT_CACHE_VERSION,
+    DEFAULT_LLM_CONFIG,
+    PROJECT_MEMORY_KEYS,
+)
+from modules import candidate_pool as cp
+from modules import knowledge_base as kb
+from modules import llm_config
+from modules.data_columns import add_analysis_columns
+from modules.formatting import (
+    format_money as _format_money,
+    format_years as _format_years,
+)
+from modules.rule_text import (
+    collect_rule_changes as _collect_rule_changes,
+    rule_counts as _rule_counts,
+)
+from modules.visual_analysis import (
+    build_adjustment_views_from_work,
+    build_ap_accrual_monthly_view_from_work,
+    build_customer_top10_from_work,
+    build_monthly_revenue_cost_view_from_work,
+    build_other_payable_monthly_view_from_work,
+    build_other_receivable_monthly_view_from_work,
+    build_supplier_top10_from_work,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,6 +119,9 @@ def _init_state():
         "financials_version": None,
         "audit_llm_analysis": {},
         "candidate_pool": [],
+        "custom_rule_keys": [],
+        "custom_rule_counter": 0,
+        "custom_rule_meta": {},
         "llm_config": _initial_llm_config(),
         "rules_config": None,
         "rule_results": [],
@@ -282,6 +287,9 @@ def _reset_current_project(project_name: str = "") -> None:
     st.session_state.financials_version = None
     st.session_state.audit_llm_analysis = {}
     st.session_state.candidate_pool = []
+    st.session_state.custom_rule_keys = []
+    st.session_state.custom_rule_counter = 0
+    st.session_state.custom_rule_meta = {}
     st.session_state.rules_config = None
     st.session_state.rule_results = []
     st.session_state.llm_judgments = {}
@@ -381,6 +389,9 @@ def _clear_analysis_results():
     st.session_state.financials_version = None
     st.session_state.audit_llm_analysis = {}
     st.session_state.candidate_pool = []
+    st.session_state.custom_rule_keys = []
+    st.session_state.custom_rule_counter = 0
+    st.session_state.custom_rule_meta = {}
     st.session_state.rules_config = None
     st.session_state.rule_results = []
     st.session_state.llm_judgments = {}
@@ -458,9 +469,22 @@ def _income_page_candidate_counts(year: int, category: str) -> dict[str, dict[An
     return counts
 
 
+def _account_overrides_key() -> tuple[tuple[str, str], ...]:
+    """科目分类覆盖的稳定签名，用于驱动缓存失效。"""
+    raw = st.session_state.get("account_category_overrides", {})
+    if not isinstance(raw, dict):
+        return tuple()
+    return tuple(sorted((str(k), str(v)) for k, v in raw.items()))
+
+
 @st.cache_data(show_spinner=False)
-def _build_audit_cache(df: pd.DataFrame, cache_version: int = AUDIT_CACHE_VERSION) -> dict[str, pd.DataFrame]:
+def _build_audit_cache_cached(
+    df: pd.DataFrame,
+    overrides_key: tuple[tuple[str, str], ...],
+    cache_version: int,
+) -> dict[str, pd.DataFrame]:
     _ = cache_version
+    _ = overrides_key
     work = add_analysis_columns(df)
     return {
         "work": work,
@@ -473,13 +497,28 @@ def _build_audit_cache(df: pd.DataFrame, cache_version: int = AUDIT_CACHE_VERSIO
     }
 
 
+def _build_audit_cache(df: pd.DataFrame, cache_version: int = AUDIT_CACHE_VERSION) -> dict[str, pd.DataFrame]:
+    return _build_audit_cache_cached(df, _account_overrides_key(), cache_version)
+
+
 @st.cache_data(show_spinner=False)
+def _build_adjustment_cache_cached(
+    df: pd.DataFrame,
+    keywords: tuple[str, ...],
+    overrides_key: tuple[tuple[str, str], ...],
+    cache_version: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    _ = cache_version
+    _ = overrides_key
+    work = add_analysis_columns(df)
+    return build_adjustment_views_from_work(work, keywords=keywords)
+
+
 def _build_adjustment_cache(
     df: pd.DataFrame,
     keywords: tuple[str, ...],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    work = add_analysis_columns(df)
-    return build_adjustment_views_from_work(work, keywords=keywords)
+    return _build_adjustment_cache_cached(df, keywords, _account_overrides_key(), AUDIT_CACHE_VERSION)
 
 
 # 推荐编排器（payload 构造 + LLM 并发生成 + 卡片渲染）已抽到 components/llm_orchestration.py。

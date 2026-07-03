@@ -18,8 +18,13 @@ if ! command -v uv >/dev/null 2>&1; then
   echo "uv 是 Python 包管理器，用于安装本项目的依赖。"
   echo "安装说明：https://docs.astral.sh/uv/getting-started/installation/"
   echo
-  read -r -p "是否自动安装 uv？[Y/n] " answer
-  answer="${answer:-Y}"
+  if [ -t 0 ]; then
+    read -r -p "是否自动安装 uv？[Y/n] " answer
+    answer="${answer:-Y}"
+  else
+    echo "非交互启动环境，默认自动安装 uv。"
+    answer="Y"
+  fi
   if [[ ! "$answer" =~ ^[Yy] ]]; then
     echo "已取消。请手动安装 uv 后重新启动本脚本。"
     [ ! -t 0 ] || read -r -p "按回车关闭窗口..."

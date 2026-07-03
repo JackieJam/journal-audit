@@ -19,7 +19,15 @@ import logging
 import time
 from typing import Any
 
-from openai import APIConnectionError, APITimeoutError
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    AuthenticationError,
+    NotFoundError,
+    OpenAI,
+    PermissionDeniedError,
+    RateLimitError,
+)
 
 from modules.llm_quota import record_llm_call
 
@@ -67,3 +75,61 @@ def chat_with_retry(
             raise
     # 循环要么 return 要么 raise，理论不可达
     raise last_exc  # type: ignore[misc]
+
+
+def ping(
+    api_key: str,
+    *,
+    model: str,
+    base_url: str,
+    timeout: float = 15.0,
+) -> tuple[bool, str]:
+    """轻量连通性测试：发一条最小请求，验证 Key/Base URL/模型三者是否可用。
+
+    在分析阶段真正调用 LLM 之前，让用户能一键确认配置可用，避免到核实/校准
+    环节才报「LLM 调用错误」。返回 ``(ok, message)``，message 已按错误类型
+    归类为可读的中文提示。
+
+    设计：
+    - ``max_retries=0`` —— 测试要快速给出结果，不做退避重试。
+    - 不计入 LLM 配额（不调用 ``record_llm_call``）：连通性测试属基础设施动作，
+      不应消耗当日分析额度。
+    - ``max_tokens=1`` —— 只要服务端正常返回结构即视为连通。
+    """
+    if not (api_key or "").strip():
+        return False, "未配置 API Key，先在上方填入或设置环境变量。"
+    if not (model or "").strip():
+        return False, "未填写模型名。"
+    if not (base_url or "").strip():
+        return False, "未填写 Base URL。"
+
+    try:
+        client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            max_retries=0,
+        )
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=1,
+            messages=[{"role": "user", "content": "ping"}],
+        )
+    except AuthenticationError:
+        return False, "认证失败：API Key 无效或已过期。"
+    except PermissionDeniedError:
+        return False, "无权限：该 Key 无权访问此模型或接口。"
+    except NotFoundError:
+        return False, f"未找到：检查模型名「{model}」与 Base URL「{base_url}」是否匹配。"
+    except RateLimitError:
+        return False, "限流/欠费：触发 429，可能余额不足或调用过于频繁。"
+    except APITimeoutError:
+        return False, f"超时（>{timeout:.0f}s）：检查网络或 Base URL「{base_url}」。"
+    except APIConnectionError as exc:
+        return False, f"连接失败：无法连到「{base_url}」（{exc}）。"
+    except Exception as exc:  # noqa: BLE001 —— 测试入口需把任意错误转成用户文案
+        return False, f"调用失败：{type(exc).__name__}: {exc}"
+
+    if getattr(response, "choices", None):
+        return True, f"连接成功：模型「{model}」响应正常。"
+    return True, f"已连通「{base_url}」，但返回结构异常，请抽查一次实际分析。"

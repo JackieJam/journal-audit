@@ -10,13 +10,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from config.constants import PARAM_LABELS, RULE_META, RULE_ORDER
 from modules.formatting import (
     format_list,
     format_money,
     format_multiplier,
     format_percent,
 )
-from config.constants import RULE_ORDER, RULE_META, PARAM_LABELS
 
 
 def format_param_value(key: str, value: Any) -> str:

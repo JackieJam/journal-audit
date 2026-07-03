@@ -8,13 +8,13 @@ Step 2 审计可视化数据准备。
 from __future__ import annotations
 
 import re
-from typing import Iterable
+from collections.abc import Iterable
 
 import pandas as pd
 
 from config.accounts import (
-    EXPENSE_CATEGORY_PATTERNS,
     DEFAULT_ADJUSTMENT_KEYWORDS,
+    EXPENSE_CATEGORY_PATTERNS,
 )
 from modules.account_classifier import (
     BALANCE_SHEET_SIDE,
@@ -223,9 +223,10 @@ def build_revenue_customer_monthly_focus_from_work_map(
         revenue = revenue[revenue["_customer_display"] != "未维护"].copy()
         if revenue.empty:
             continue
+        direction = revenue["_dc"]
         grouped = revenue.groupby(["_customer_display", "_month"], dropna=False).agg(
-            收入H影响=("_amount_raw", lambda x: float(x[revenue.loc[x.index, "_dc"] == "H"].sum())),
-            收入S影响=("_amount_raw", lambda x: float(x[revenue.loc[x.index, "_dc"] == "S"].sum())),
+            收入H影响=("_amount_raw", lambda x, direction=direction: float(x[direction.loc[x.index] == "H"].sum())),
+            收入S影响=("_amount_raw", lambda x, direction=direction: float(x[direction.loc[x.index] == "S"].sum())),
             凭证数=("凭证编号", "nunique"),
         ).reset_index()
         grouped = grouped.rename(columns={"_customer_display": "客户", "_month": "月份"})

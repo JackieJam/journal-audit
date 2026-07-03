@@ -13,14 +13,13 @@ from __future__ import annotations
 
 from typing import Any
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import streamlit as st
 
 from config.accounts import AUTO_VOUCHER_TYPES
 from modules.data_columns import add_analysis_columns
 from modules.visual_analysis import build_monthly_revenue_cost_view_from_work
-
 
 # ── 主函数 ──
 
@@ -269,7 +268,9 @@ def _account_structure(df: pd.DataFrame) -> dict:
     )
     if name_col is not None:
         from modules.account_classifier import (
-            auto_classify, CAT_REVENUE, CAT_COST,
+            CAT_COST,
+            CAT_REVENUE,
+            auto_classify,
         )
         unique_names = df[name_col].fillna("").astype(str).unique()
         cats_seen = {auto_classify(n) for n in unique_names}
@@ -461,11 +462,11 @@ def build_financial_summary(df: pd.DataFrame, year: int) -> dict[str, Any]:
     df["_acct_category"] = visual_work["_acct_category"].values
 
     from modules.account_classifier import (
-        CAT_REVENUE,
         CAT_COST,
         CAT_EXPENSE,
-        CAT_RD_EXPENSE,
         CAT_FINANCIAL_EXPENSE,
+        CAT_RD_EXPENSE,
+        CAT_REVENUE,
         CAT_TAX_SURCHARGE,
     )
 

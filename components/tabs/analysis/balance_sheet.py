@@ -64,7 +64,7 @@ def render_balance_sheet(ctx: AnalysisContext) -> None:
         format_func=lambda c: f"{c}（{BALANCE_SHEET_SIDE.get(c, '')}）",
     )
     side = BALANCE_SHEET_SIDE.get(cat, "")
-    cat_key = hashlib.sha1(f"{cat}".encode("utf-8")).hexdigest()[:8]
+    cat_key = hashlib.sha1(f"{cat}".encode()).hexdigest()[:8]
 
     _render_monthly_movement(
         audit_work, df_audit, year, cat, side, cat_key,
@@ -150,7 +150,7 @@ def _render_account_concentration(
     # 标签 -> 科目编号映射，供点选回查
     label_to_code = {
         f"{code} {name}".strip(): str(code)
-        for code, name in zip(breakdown["科目编号"], breakdown["科目名称"])
+        for code, name in zip(breakdown["科目编号"], breakdown["科目名称"], strict=True)
     }
     event = st.plotly_chart(
         category_account_breakdown_chart(breakdown, f"{year}年 {cat} 科目净变动 Top15"),

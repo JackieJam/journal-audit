@@ -17,6 +17,7 @@ from openpyxl.utils import get_column_letter
 
 if TYPE_CHECKING:
     import pandas as pd
+
     from modules.llm_verifier import LLMJudgment
     from modules.rule_engine import RuleHit, RuleResult
 
@@ -42,9 +43,9 @@ SAMPLE_COLS = [
 
 
 def generate_report(
-    df: "pd.DataFrame",
-    rule_results: list["RuleResult"],
-    llm_judgments: dict[str, list["LLMJudgment"]],
+    df: pd.DataFrame,
+    rule_results: list[RuleResult],
+    llm_judgments: dict[str, list[LLMJudgment]],
     output_path: str,
     max_sample_size: int = 50,
     manual_final_samples: list[dict] | None = None,
@@ -58,18 +59,31 @@ def generate_report(
 
     if judgment_lookup:
         # 有 LLM 核实：按风险级别排序，取 top N
-        confirmed_vids = sorted(
+        confirmed_primary_vids = sorted(
             judgment_lookup.keys(),
             key=lambda v: judgment_lookup[v].risk_level == "高",
             reverse=True,
-        )[:max_sample_size]
+        )
+        confirmed_vids = []
+        for vid in confirmed_primary_vids:
+            sample_vids = [vid]
+            for hit in hit_lookup.get(vid, []):
+                sample_vids.extend(_hit_voucher_ids(hit))
+            for sample_vid in sample_vids:
+                sample_vid = str(sample_vid)
+                if sample_vid and sample_vid not in confirmed_vids:
+                    confirmed_vids.append(sample_vid)
+                if len(confirmed_vids) >= max_sample_size:
+                    break
+            if len(confirmed_vids) >= max_sample_size:
+                break
     else:
         # 无 LLM：按规则命中优先级排序，取 top N 凭证
         voucher_priority: dict[str, int] = {}
         for rr in rule_results:
             for hit in rr.hits:
-                vid = hit.voucher_id
-                voucher_priority[vid] = max(voucher_priority.get(vid, 0), hit.priority)
+                for vid in _hit_voucher_ids(hit):
+                    voucher_priority[vid] = max(voucher_priority.get(vid, 0), hit.priority)
         confirmed_vids = sorted(
             voucher_priority.keys(),
             key=lambda v: voucher_priority[v],
@@ -85,7 +99,12 @@ def generate_report(
 
     wb.save(output_path)
 
-    total_unique_vouchers = len({h.voucher_id for rr in rule_results for h in rr.hits})
+    total_unique_vouchers = len({
+        vid
+        for rr in rule_results
+        for h in rr.hits
+        for vid in _hit_voucher_ids(h)
+    })
     return {
         "output_path": output_path,
         "sample_vouchers": len(confirmed_vids),
@@ -102,7 +121,7 @@ def generate_report(
     }
 
 
-def _build_judgment_lookup(llm_judgments: dict) -> dict[str, "LLMJudgment"]:
+def _build_judgment_lookup(llm_judgments: dict) -> dict[str, LLMJudgment]:
     lookup: dict = {}
     for judgments in llm_judgments.values():
         for j in judgments:
@@ -115,12 +134,19 @@ def _build_judgment_lookup(llm_judgments: dict) -> dict[str, "LLMJudgment"]:
     return lookup
 
 
-def _build_hit_lookup(rule_results: list["RuleResult"]) -> dict[str, list["RuleHit"]]:
+def _build_hit_lookup(rule_results: list[RuleResult]) -> dict[str, list[RuleHit]]:
     lookup: dict = {}
     for rr in rule_results:
         for hit in rr.hits:
-            lookup.setdefault(hit.voucher_id, []).append(hit)
+            for vid in _hit_voucher_ids(hit):
+                lookup.setdefault(vid, []).append(hit)
     return lookup
+
+
+def _hit_voucher_ids(hit) -> list[str]:
+    ids = [str(hit.voucher_id)]
+    ids.extend(str(vid) for vid in getattr(hit, "related_voucher_ids", ()) or ())
+    return [vid for vid in dict.fromkeys(ids) if vid]
 
 
 def _write_sample_sheet(wb, df, confirmed_vids, hit_lookup, judgment_lookup):
@@ -218,7 +244,7 @@ def _write_manual_final_sheet(wb, df, manual_final_samples):
     ]
     widths = [28, 14, 20, 24, 36, 14, 8, 12, 10, 12, 22, 8, 16, 34, 22, 22, 12]
 
-    for col_idx, (header, width) in enumerate(zip(headers, widths), 1):
+    for col_idx, (header, width) in enumerate(zip(headers, widths, strict=True), 1):
         cell = ws.cell(row=1, column=col_idx, value=header)
         cell.font = HEADER_FONT
         cell.fill = HEADER_FILL
@@ -268,7 +294,7 @@ def _write_stats_sheet(wb, rule_results, llm_judgments):
     headers = ["规则名称", "命中凭证数", "LLM确认数", "确认率", "高风险", "中风险"]
     widths = [22, 14, 14, 10, 10, 10]
 
-    for col_idx, (h, w) in enumerate(zip(headers, widths), 1):
+    for col_idx, (h, w) in enumerate(zip(headers, widths, strict=True), 1):
         cell = ws.cell(row=1, column=col_idx, value=h)
         cell.font = HEADER_FONT
         cell.fill = HEADER_FILL
@@ -310,7 +336,7 @@ def _write_rules_sheet(wb, rule_results):
     headers = ["规则名称", "规则类型", "凭证编号", "组合ID", "关联凭证", "优先级", "触发证据", "组合证据"]
     widths = [18, 24, 14, 24, 28, 8, 60, 70]
 
-    for col_idx, (h, w) in enumerate(zip(headers, widths), 1):
+    for col_idx, (h, w) in enumerate(zip(headers, widths, strict=True), 1):
         cell = ws.cell(row=1, column=col_idx, value=h)
         cell.font = HEADER_FONT
         cell.fill = HEADER_FILL

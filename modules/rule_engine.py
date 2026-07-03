@@ -282,7 +282,7 @@ def rule_splitting(df: pd.DataFrame, cfg: dict) -> RuleResult:
     flagged: set[str] = set()
 
     # 维度1：同日同供应商 — 金额高度相似（差异≤15%）才是化整为零的核心特征
-    for (vendor, date), grp in pay.groupby(["供应商编号", "过账日期"]):
+    for (vendor, _date), grp in pay.groupby(["供应商编号", "过账日期"]):
         if len(grp) < min_count or grp["_abs"].sum() < min_total:
             continue
         amts = grp["_abs"].values
@@ -1123,10 +1123,44 @@ def rule_sensitive_fees(df: pd.DataFrame, cfg: dict) -> RuleResult:
 # 跨年规则 → RuleHit 转换
 # ─────────────────────────────────────────────
 
-def cross_year_findings_to_hits(findings: list) -> RuleResult:
+_CROSS_YEAR_CATEGORY_RULE_MAP = {
+    "预提冲回配对": "cross_year_accrual",
+    "预提冲回金额不符": "cross_year_accrual",
+    "收入跨年确认": "cross_year_revenue",
+}
+
+
+def _rule_enabled(cfg: dict | None, rule_key: str, default: bool = True) -> bool:
+    section = (cfg or {}).get(rule_key)
+    if not isinstance(section, dict):
+        return default
+    return bool(section.get("enabled", default))
+
+
+def _cross_year_detection_enabled(cfg: dict | None) -> bool:
+    section = (cfg or {}).get("cross_year_detection")
+    if isinstance(section, dict) and "enabled" in section:
+        return bool(section.get("enabled"))
+    return (
+        _rule_enabled(cfg, "cross_year_accrual", default=True)
+        or _rule_enabled(cfg, "cross_year_revenue", default=True)
+    )
+
+
+def _include_cross_year_finding(finding: Any, cfg: dict | None) -> bool:
+    category = str(getattr(finding, "category", ""))
+    rule_key = _CROSS_YEAR_CATEGORY_RULE_MAP.get(category)
+    if rule_key:
+        return _rule_enabled(cfg, rule_key, default=True)
+    return _cross_year_detection_enabled(cfg)
+
+
+def cross_year_findings_to_hits(findings: list, cfg: dict | None = None) -> RuleResult:
     """将 cross_year.CrossYearFinding 列表转为 RuleResult。"""
     result = RuleResult(rule_name="跨年异常")
     for f in findings:
+        if not _include_cross_year_finding(f, cfg):
+            continue
         severity_priority = {"高": 5, "中": 3, "低": 2}.get(f.severity, 2)
         for vid in f.voucher_ids:
             result.hits.append(RuleHit(
@@ -1222,7 +1256,9 @@ def run_all_rules(
                 f for f in cross_year_findings
                 if set(str(v) for v in getattr(f, "voucher_ids", [])).intersection(candidate_set)
             ]
-        results.append(cross_year_findings_to_hits(scoped_findings))
+        cross_year_result = cross_year_findings_to_hits(scoped_findings, cfg)
+        if cross_year_result.hits:
+            results.append(cross_year_result)
 
     if candidate_set:
         for result in results:

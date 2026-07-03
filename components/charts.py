@@ -6,12 +6,10 @@ Streamlit 用 st.plotly_chart(fig, width="stretch") 渲染。
 
 from __future__ import annotations
 
-
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
 
 # 现代专业审计配色方案
 COLORS = [
@@ -35,9 +33,9 @@ def _quiet_profile_layout(
     """Shared spacing for compact Streamlit profile charts."""
     fig.update_layout(
         title=dict(
-            text=f"<b>{title}</b>", 
-            y=0.98, 
-            x=0.0, 
+            text=f"<b>{title}</b>",
+            y=0.98,
+            x=0.0,
             xanchor="left",
             font=dict(size=16)
         ),
@@ -478,7 +476,7 @@ def multi_year_financial_overview(financials: dict[int, dict]) -> go.Figure:
     # 净利润 = 毛利 - 费用合计 + 投资收益 + 营业外收支
     net_vals = []
     net_margin_vals = []
-    for y, exp_for_net in zip(years, expense_total_vals):
+    for y, exp_for_net in zip(years, expense_total_vals, strict=True):
         f = financials[y]
         rev = f["revenue"]["total"]
         gp = f["gross_profit"]
@@ -682,7 +680,7 @@ def cross_year_expense_compare_chart(expense_df: pd.DataFrame) -> go.Figure:
             orientation="h",
             marker_color=COLORS[i % len(COLORS)],
             customdata=year_df["年份"],
-            text=[f"{v/1e4:,.1f}万 ({p:.0f}%)" for v, p in zip(year_df["金额"], year_df["_pct"])],
+            text=[f"{v/1e4:,.1f}万 ({p:.0f}%)" for v, p in zip(year_df["金额"], year_df["_pct"], strict=True)],
             textposition="outside",
             textfont=dict(size=11),
             hovertemplate="费用类别=%{y}<br>金额=%{x:,.0f}元<br>年份=%{customdata}<extra></extra>",
@@ -1227,7 +1225,7 @@ def category_account_breakdown_chart(
 
     data = breakdown_df.head(top_n).iloc[::-1]
     labels = [
-        f"{code} {name}".strip() for code, name in zip(data["科目编号"], data["科目名称"])
+        f"{code} {name}".strip() for code, name in zip(data["科目编号"], data["科目名称"], strict=True)
     ]
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -1302,7 +1300,7 @@ def ap_accrual_supplier_share_chart(share_df: pd.DataFrame, title: str) -> go.Fi
 
 # ── 统计画像数据辅助表 ──
 
-def profile_amount_percentile_table(profile: dict) -> "pd.DataFrame":
+def profile_amount_percentile_table(profile: dict) -> pd.DataFrame:
     amt = profile.get("amount_distribution", {})
     rows = []
     for key, label in [("row_level", "行级金额"), ("voucher_level", "凭证级金额")]:
@@ -1322,7 +1320,7 @@ def profile_amount_percentile_table(profile: dict) -> "pd.DataFrame":
     return pd.DataFrame(rows)
 
 
-def profile_temporal_table(profile: dict) -> "pd.DataFrame":
+def profile_temporal_table(profile: dict) -> pd.DataFrame:
     tp = profile.get("temporal_patterns", {})
     monthly_count = tp.get("monthly_count", {})
     monthly_amount = tp.get("monthly_amount", {})
@@ -1340,7 +1338,7 @@ def profile_temporal_table(profile: dict) -> "pd.DataFrame":
     return pd.DataFrame(rows)
 
 
-def profile_benford_table(profile: dict) -> "pd.DataFrame":
+def profile_benford_table(profile: dict) -> pd.DataFrame:
     benford = profile.get("benford_first_digit", {})
     observed = benford.get("observed", {})
     expected = benford.get("expected", {})

@@ -14,8 +14,8 @@ def extract_json(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
         lines = text.split("\n")
-        start = next((i + 1 for i, l in enumerate(lines) if l.startswith("```")), 1)
-        end = next((i for i, l in enumerate(lines[start:], start) if l.startswith("```")), len(lines))
+        start = next((i + 1 for i, line in enumerate(lines) if line.startswith("```")), 1)
+        end = next((i for i, line in enumerate(lines[start:], start) if line.startswith("```")), len(lines))
         text = "\n".join(lines[start:end]).strip()
     return text
 
@@ -34,7 +34,7 @@ def parse_json_dict(text: str) -> dict[str, Any]:
         if match:
             data = json.loads(match.group())
         else:
-            raise ValueError(f"LLM 返回内容无法解析为 JSON 对象：{text[:200]}")
+            raise ValueError(f"LLM 返回内容无法解析为 JSON 对象：{text[:200]}") from None
     if not isinstance(data, dict):
         raise ValueError("LLM 返回内容不是 JSON 对象")
     return data
@@ -54,7 +54,7 @@ def parse_json_list(text: str) -> list[dict[str, Any]]:
         if match:
             data = json.loads(match.group())
         else:
-            raise ValueError(f"LLM 返回内容无法解析为 JSON 数组：{text[:200]}")
+            raise ValueError(f"LLM 返回内容无法解析为 JSON 数组：{text[:200]}") from None
     if not isinstance(data, list):
         raise ValueError("LLM 返回内容不是 JSON 数组")
     return data
