@@ -6,18 +6,19 @@ upload/rules 页签一致的调用约定。
 
 from __future__ import annotations
 
+import copy
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from modules.rule_generator import default_rules_config
-from modules.rule_engine import run_all_rules, hits_summary, RuleHit, RuleResult
+from components.charts import risk_level_pie, rule_hit_bar
+from modules import candidate_pool as cp
 from modules.llm_verifier import verify_with_llm
 from modules.reporter import generate_report
-from modules import candidate_pool as cp
-from components.charts import rule_hit_bar, risk_level_pie
+from modules.rule_engine import RuleHit, RuleResult, hits_summary, run_all_rules
+from modules.rule_generator import default_rules_config
 
 # 报告输出目录固定为仓库根目录（与原 app.py 中 Path(__file__).parent 行为一致）。
 # 本文件位于 <root>/components/tabs/sampling.py，parents[2] 即仓库根。
@@ -87,6 +88,7 @@ def render_sampling_tab(main_tab=None, **helpers):
             key="sample_max_size",
             help="最终输出的最大凭证数量。",
         )
+        max_sample_size = int(max_sample_size)
 
     if rule_source == "calibrated_rules":
         if st.session_state.rules_config:
@@ -110,7 +112,7 @@ def render_sampling_tab(main_tab=None, **helpers):
         st.caption("调整各科目大类的抽样权重（将自动归一化）：")
         weight_cols = st.columns(len(weights))
         new_weights = {}
-        for (cat, default_w), col in zip(weights.items(), weight_cols):
+        for (cat, default_w), col in zip(weights.items(), weight_cols, strict=True):
             with col:
                 new_weights[cat] = st.slider(
                     cat, 0.0, 1.0, default_w, 0.05,
@@ -163,11 +165,13 @@ def render_sampling_tab(main_tab=None, **helpers):
 
     if st.button("🚀 执行样本抽取", type="primary", width="stretch"):
         if rule_source == "calibrated_rules" and st.session_state.rules_config:
-            cfg = st.session_state.rules_config
+            cfg = copy.deepcopy(st.session_state.rules_config)
         else:
             cfg = default_rules_config()
+        cfg["max_sample_size"] = max_sample_size
 
         with st.spinner("正在执行样本抽取..."):
+            st.session_state.sample_max_size_effective = max_sample_size
             if sample_method == "by_rule":
                 scope_ids = candidate_voucher_ids if use_candidate_scope else None
                 rule_results = run_all_rules(
@@ -202,11 +206,11 @@ def render_sampling_tab(main_tab=None, **helpers):
                 else:
                     st.session_state.llm_judgments = {}
 
-                samples = cp.sample_from_pool(
-                    pool, df,
-                    method="by_rule",
+                samples = cp.sample_from_rule_results(
+                    rule_results,
+                    df,
                     size=max_sample_size,
-                    rules_config=cfg,
+                    pool=pool,
                 )
                 st.session_state.final_samples = samples
             elif sample_method == "by_account_weight":
@@ -310,7 +314,7 @@ def render_sampling_tab(main_tab=None, **helpers):
     st.subheader("📄 报告下载")
 
     cfg = st.session_state.rules_config or {}
-    max_sample = cfg.get("max_sample_size", 50)
+    max_sample = int(st.session_state.get("sample_max_size_effective") or cfg.get("max_sample_size", 50))
 
     if not st.session_state.report_stats:
         with st.spinner("正在汇总数据并生成 Excel 报告..."):

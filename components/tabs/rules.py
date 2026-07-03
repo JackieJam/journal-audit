@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
-
 import pandas as pd
 import streamlit as st
 
+from config.constants import PARAM_HELP, PARAM_LABELS, RULE_META, RULE_ORDER
+from modules import candidate_pool as cp
+from modules import knowledge_base as kb
+from modules.cross_year import findings_to_summary_text
+from modules.profiler import financials_to_summary_text, profiles_to_summary_text
 from modules.rule_generator import (
-    generate_rules_config,
     default_rules_config,
+    generate_rules_config,
     pin_cross_year_thresholds,
 )
-from modules.profiler import profiles_to_summary_text, financials_to_summary_text
-from modules.cross_year import findings_to_summary_text
-from modules import knowledge_base as kb
-from modules import candidate_pool as cp
-from config.constants import RULE_ORDER, RULE_META, PARAM_LABELS, PARAM_HELP
-
 
 # 跨年检测阈值：这些参数真正驱动 cross_year.py 的计算（已 config 化）。
 # 用户改动后必须让已缓存的 cross_year_findings 失效，否则界面改了、检测不变。
@@ -30,6 +28,37 @@ def _invalidate_cross_year_if_needed(rule_key: str, param_key: str) -> None:
     """若改动的是跨年检测阈值，清空 findings，使下次进分析页签重算。"""
     if param_key in _CROSS_YEAR_DETECTION_PARAMS.get(rule_key, set()):
         st.session_state.cross_year_findings = []
+
+
+def _ensure_custom_rule_state() -> None:
+    if "custom_rule_keys" not in st.session_state:
+        st.session_state.custom_rule_keys = []
+    if "custom_rule_counter" not in st.session_state:
+        st.session_state.custom_rule_counter = 0
+    if "custom_rule_meta" not in st.session_state or not isinstance(st.session_state.custom_rule_meta, dict):
+        st.session_state.custom_rule_meta = {}
+    _restore_custom_rule_meta()
+
+
+def _restore_custom_rule_meta() -> None:
+    for rule_key, meta in st.session_state.get("custom_rule_meta", {}).items():
+        if isinstance(meta, dict):
+            RULE_META[rule_key] = {
+                "title": str(meta.get("title", rule_key)),
+                "purpose": str(meta.get("purpose", "")),
+            }
+
+
+def _set_custom_rule_meta(rule_key: str, title: str, purpose: str) -> None:
+    meta = {"title": title, "purpose": purpose}
+    st.session_state.custom_rule_meta[rule_key] = meta
+    RULE_META[rule_key] = meta
+
+
+def _remove_custom_rule_meta(rule_key: str) -> None:
+    st.session_state.custom_rule_meta.pop(rule_key, None)
+    if rule_key in RULE_META and "_custom_" in rule_key:
+        del RULE_META[rule_key]
 
 
 def render_rules_tab(main_tab, **helpers):
@@ -56,10 +85,7 @@ def render_rules_tab(main_tab, **helpers):
         st.session_state.rules_config = base_cfg.copy()
 
     # ── 自定义规则索引 ──
-    if "custom_rule_keys" not in st.session_state:
-        st.session_state.custom_rule_keys = []
-    if "custom_rule_counter" not in st.session_state:
-        st.session_state.custom_rule_counter = 0
+    _ensure_custom_rule_state()
 
     cfg = st.session_state.rules_config
     custom_keys = st.session_state.custom_rule_keys
@@ -97,6 +123,7 @@ def render_rules_tab(main_tab, **helpers):
             st.session_state.rules_config = base_cfg.copy()
             st.session_state.custom_rule_keys = []
             st.session_state.custom_rule_counter = 0
+            st.session_state.custom_rule_meta = {}
             _autosave_current_project_state()
             st.success("已恢复默认参数（自定义规则已清除）。")
             st.rerun()
@@ -145,7 +172,7 @@ def render_rules_tab(main_tab, **helpers):
         chunks = [all_rule_keys[i:i+3] for i in range(0, len(all_rule_keys), 3)]
         for chunk in chunks:
             cols = st.columns(3)
-            for rule_key, col in zip(chunk, cols):
+            for rule_key, col in zip(chunk, cols, strict=False):
                 with col:
                     is_builtin = rule_key in RULE_ORDER
                     _render_rule_popover(rule_key, base_cfg, is_builtin)
@@ -487,7 +514,7 @@ def _render_params_grid(cfg_section: dict, params: dict, base_params: dict, rule
         chunks = [simple_params[i:i+cols_per_row] for i in range(0, len(simple_params), cols_per_row)]
         for chunk in chunks:
             cols = st.columns(cols_per_row)
-            for (pk, pv), col in zip(chunk, cols):
+            for (pk, pv), col in zip(chunk, cols, strict=False):
                 with col:
                     _render_single_param(cfg_section, pk, pv, base_params.get(pk), rule_key)
 
@@ -627,11 +654,12 @@ def _render_create_rule_form(base_cfg: dict):
         if new_key not in st.session_state.custom_rule_keys:
             st.session_state.custom_rule_keys.append(new_key)
 
-        # Add meta info for display
-        RULE_META[new_key] = {
-            "title": custom_name.strip(),
-            "purpose": f"自定义规则，基于 {RULE_META.get(base_rule_type, {}).get('title', base_rule_type)}",
-        }
+        # Add meta info for display and project persistence
+        _set_custom_rule_meta(
+            new_key,
+            custom_name.strip(),
+            f"自定义规则，基于 {RULE_META.get(base_rule_type, {}).get('title', base_rule_type)}",
+        )
 
         st.success(f"已创建自定义规则：{custom_name.strip()}（键名：{new_key}）")
         st.rerun()
@@ -657,10 +685,11 @@ def _clone_rule(rule_key: str):
     if new_key not in st.session_state.custom_rule_keys:
         st.session_state.custom_rule_keys.append(new_key)
 
-    RULE_META[new_key] = {
-        "title": f"{old_title} (克隆)",
-        "purpose": RULE_META.get(rule_key, {}).get("purpose", ""),
-    }
+    _set_custom_rule_meta(
+        new_key,
+        f"{old_title} (克隆)",
+        RULE_META.get(rule_key, {}).get("purpose", ""),
+    )
 
     st.success(f"已克隆：{old_title} → {RULE_META[new_key]['title']}")
 
@@ -672,6 +701,5 @@ def _delete_rule(rule_key: str, title: str):
         del cfg[rule_key]
     if rule_key in st.session_state.custom_rule_keys:
         st.session_state.custom_rule_keys.remove(rule_key)
-    if rule_key in RULE_META and "_custom_" in rule_key:
-        del RULE_META[rule_key]
+    _remove_custom_rule_meta(rule_key)
     st.success(f"已删除：{title}")

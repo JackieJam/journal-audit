@@ -17,7 +17,6 @@ from pathlib import Path
 from modules.locking import file_lock
 from modules.runtime_context import namespace_path, storage_namespace_label
 
-
 SERVICE_NAME = "journal-audit-llm-api-key"
 SECRET_FILE = "secrets.json"
 

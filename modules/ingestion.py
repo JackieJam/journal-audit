@@ -459,7 +459,7 @@ def _synthesize_dc_from_amounts(df: pd.DataFrame) -> pd.DataFrame:
     dc[mask_debit_only] = "S"
     dc[mask_credit_only] = "H"
     dc[mask_both] = pd.Series(
-        ["S" if d >= c else "H" for d, c in zip(debit_vals[mask_both], credit_vals[mask_both])],
+        ["S" if d >= c else "H" for d, c in zip(debit_vals[mask_both], credit_vals[mask_both], strict=True)],
         index=dc[mask_both].index,
     )
 
@@ -532,7 +532,7 @@ def _deduplicate(df: pd.DataFrame) -> pd.DataFrame:
     removed = before - len(df)
     if removed > 0:
         import warnings
-        warnings.warn(f"去重移除 {removed} 行整行重复记录")
+        warnings.warn(f"去重移除 {removed} 行整行重复记录", stacklevel=2)
     return df
 
 

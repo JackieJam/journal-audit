@@ -108,6 +108,19 @@ def test_accrual_coverage_threshold_respected() -> None:
     assert not any(f.category == "预提冲回配对" for f in flagged_070), "0.70 阈值下 75% 覆盖率不应判为悬空"
 
 
+def test_accrual_match_window_days_respected() -> None:
+    """4月冲回：90天窗口应排除并命中悬空，120天窗口应纳入并不命中。"""
+    year_map = {
+        2023: _accrual_df(2023, 1_000_000.0, "年末预提费用"),
+        2024: _accrual_df(2024, 1_000_000.0, "冲销预提", month=4),
+    }
+    flagged_90 = _accrual_reversal_pairs(year_map, match_window_days=90)
+    flagged_120 = _accrual_reversal_pairs(year_map, match_window_days=120)
+
+    assert any(f.category == "预提冲回配对" for f in flagged_90)
+    assert not any(f.category == "预提冲回配对" for f in flagged_120)
+
+
 def test_revenue_multiplier_threshold_respected() -> None:
     """12 月收入为均值 1.65 倍：阈值 1.8 不触发，阈值 1.5 触发。"""
     months = {m: 100_000.0 for m in range(1, 12)}   # 1-11 月各 10 万
@@ -157,8 +170,9 @@ def test_cross_year_cache_invalidates_on_threshold_change() -> None:
 def test_cross_year_thresholds_defaults_and_detection_block() -> None:
     """空 cfg 回落默认；cross_year_detection 自定义值被正确读出。"""
     defaults = _cross_year_thresholds(None)
-    # 两个 UI 阈值 + 全部高级阈值都应在返回 dict 中
+    # UI 暴露阈值 + 全部高级阈值都应在返回 dict 中
     assert defaults["coverage_threshold"] == 0.80
+    assert defaults["match_window_days"] == 90
     assert defaults["dec_multiplier"] == 1.8
     for key, val in _CROSS_YEAR_DETECTION_DEFAULTS.items():
         assert defaults[key] == val

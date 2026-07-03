@@ -19,7 +19,6 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-
 # ── 类别常量 ────────────────────────────────────────────────
 # 字符串值与 UI 下拉、各分析模块比较保持一致。
 

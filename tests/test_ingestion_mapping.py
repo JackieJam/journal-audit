@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from modules.ingestion import (
@@ -81,7 +83,7 @@ def test_backward_compat_suggest_mapping_returns_name_dict() -> None:
 
 def test_column_match_is_immutable() -> None:
     m = ColumnMatch(source="x", score=1.0, method="exact")
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         m.score = 0.5  # type: ignore[misc]
 
 

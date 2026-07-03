@@ -43,6 +43,7 @@ select = ["F", "E", "W", "I", "UP", "B"]
 ignore = ["E501", "B008"]
 
 [tool.ruff.lint.per-file-ignores]
+"app.py" = ["E402", "I001"]  # Streamlit 入口需先 set_page_config；导入按 UI 初始化顺序人工分组
 "tests/*" = ["B011"]
 
 [tool.mypy]

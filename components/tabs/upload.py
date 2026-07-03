@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import logging
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
+from modules import account_classifier, knowledge_base
+from modules.account_classifier import ALL_CATEGORIES, CAT_UNCATEGORIZED
 from modules.ingestion import (
     NO_COLUMN_SENTINEL,
     STANDARD_COLUMNS,
@@ -24,8 +26,6 @@ from modules.ingestion import (
     load_files,
     summarize_years,
 )
-from modules import account_classifier, knowledge_base
-from modules.account_classifier import ALL_CATEGORIES, CAT_UNCATEGORIZED
 
 logger = logging.getLogger(__name__)
 
@@ -49,16 +49,17 @@ def render_upload_tab(main_tab, **helpers) -> None:
 
     with st.expander("📁 文件上传", expanded=True):
         st.caption(
-            '支持单/多个 Excel 文件。上传后会先确认列名映射，再自动按"过账日期"识别年份。'
+            '支持单/多个 .xlsx 文件。上传后会先确认列名映射，再自动按"过账日期"识别年份。'
         )
         with st.container(border=True):
             uploaded = st.file_uploader(
-                "选择序时账文件（.xlsx / .xls）",
-                type=["xlsx", "xls", "XLSX", "XLS"],
+                "选择序时账文件（.xlsx）",
+                type=["xlsx", "XLSX"],
                 accept_multiple_files=True,
                 key=f"journal_upload_{st.session_state.get('upload_widget_nonce', 0)}",
                 label_visibility="collapsed",
             )
+            st.caption("旧版 .xls 请先另存为 .xlsx 后上传。")
 
         if uploaded:
             _process_files(

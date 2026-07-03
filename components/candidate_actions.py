@@ -13,17 +13,18 @@ app.py 通过 alias 保留原调用名（_detail_metrics 等）；其中需要 a
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import pandas as pd
 import streamlit as st
 
-from modules import candidate_pool as cp
-from modules.formatting import format_money
 from components.chart_selection import (
     selected_dataframe_focus_row_index,
     selected_dataframe_row_indices,
 )
+from modules import candidate_pool as cp
+from modules.formatting import format_money
 
 CANDIDATE_TAG_OPTIONS = [
     "收入波动", "客户", "供应商", "物料组", "成本波动", "费用波动", "成本科目", "大额", "月度", "月末", "年末",

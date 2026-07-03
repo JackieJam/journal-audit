@@ -15,7 +15,6 @@ from openai import APIConnectionError, APITimeoutError, OpenAI
 from modules.json_utils import parse_json_dict
 from modules.llm_client import chat_with_retry
 
-
 SYSTEM_PROMPT = """你是一名企业内部审计经理，正在基于序时账审计可视化结果做初步分析。
 最终目标是帮助审计师在提交的全部序时账年份中，快速定位需要穿透到凭证、合同、对账单或期后回款/付款证据的风险点。
 你的任务是阅读单年度或多年度的收入成本、暂估往来、其他往来、调账冲销等聚合指标，形成面向审计师的初步解析。

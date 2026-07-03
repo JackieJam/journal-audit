@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import io
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
 
 def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Sheet1") -> bytes:

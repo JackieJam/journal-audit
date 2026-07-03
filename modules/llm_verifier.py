@@ -12,7 +12,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from openai import APIConnectionError, APITimeoutError, OpenAI
 
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import pandas as pd
+
     from modules.rule_engine import RuleHit, RuleResult
 
 
@@ -60,8 +61,8 @@ _LLM_RETRY_BACKOFF_BASE = 1.5
 
 
 def verify_with_llm(
-    df: "pd.DataFrame",
-    rule_results: list["RuleResult"],
+    df: pd.DataFrame,
+    rule_results: list[RuleResult],
     api_key: str,
     model: str = "deepseek-chat",
     base_url: str = "https://api.deepseek.com",
@@ -85,7 +86,7 @@ def verify_with_llm(
     all_hits.sort(key=lambda x: x[1].priority, reverse=True)
 
     seen_vids: set[str] = set()
-    top_hits: list[tuple[str, "RuleHit"]] = []
+    top_hits: list[tuple[str, RuleHit]] = []
     for rule_name, hit in all_hits:
         hit_key = hit.group_id or hit.voucher_id
         if hit_key not in seen_vids and len(top_hits) < max_verify:
@@ -93,7 +94,7 @@ def verify_with_llm(
             top_hits.append((rule_name, hit))
 
     # 按规则分组
-    hits_by_rule: dict[str, list["RuleHit"]] = {}
+    hits_by_rule: dict[str, list[RuleHit]] = {}
     for rule_name, hit in top_hits:
         hits_by_rule.setdefault(rule_name, []).append(hit)
 
@@ -141,18 +142,18 @@ def verify_with_llm(
                     time.sleep(wait)
 
             if response_text:
-                batch_judgments = _build_judgments_from_response(response_text)
+                try:
+                    batch_judgments = _build_judgments_from_response(response_text)
+                except ValueError:
+                    logger.warning(
+                        "LLM verify response parse failed for rule %s",
+                        rule_name,
+                        exc_info=True,
+                    )
+                    batch_judgments = _fallback_judgments_for_hits(batch, "LLM 返回解析失败")
                 rule_judgments.extend(batch_judgments)
             else:
-                for hit in batch:
-                    rule_judgments.append(LLMJudgment(
-                        voucher_id=hit.voucher_id,
-                        confirmed=True,
-                        risk_level="中",
-                        reason=f"LLM 调用失败，疑点保留（{hit.evidence[:60]}）",
-                        audit_procedures="需人工复核",
-                        source="fallback",
-                    ))
+                rule_judgments.extend(_fallback_judgments_for_hits(batch, "LLM 调用失败"))
 
             batch_num += 1
             if progress_callback:
@@ -168,7 +169,7 @@ def verify_with_llm(
     return all_judgments
 
 
-def _build_voucher_groups(df: "pd.DataFrame", hits: list["RuleHit"]) -> list[dict]:
+def _build_voucher_groups(df: pd.DataFrame, hits: list[RuleHit]) -> list[dict]:
     row_cache: dict[tuple[str, int], list[dict]] = {}
 
     def _cached_rows(voucher_id: str, max_rows: int) -> list[dict]:
@@ -198,7 +199,7 @@ def _build_voucher_groups(df: "pd.DataFrame", hits: list["RuleHit"]) -> list[dic
     return groups
 
 
-def _rows_for_voucher(df: "pd.DataFrame", voucher_id: str, max_rows: int = 10) -> list[dict]:
+def _rows_for_voucher(df: pd.DataFrame, voucher_id: str, max_rows: int = 10) -> list[dict]:
     voucher_rows = df[df["凭证编号"] == voucher_id]
     rows_data = []
     for _, row in voucher_rows.head(max_rows).iterrows():
@@ -246,10 +247,7 @@ def _build_prompt(rule_name: str, groups: list[dict]) -> str:
 
 
 def _build_judgments_from_response(text: str) -> list[LLMJudgment]:
-    try:
-        data = parse_json_list(text)
-    except ValueError:
-        return []
+    data = parse_json_list(text)
 
     judgments = []
     for item in data:
@@ -261,5 +259,19 @@ def _build_judgments_from_response(text: str) -> list[LLMJudgment]:
             risk_level=item.get("risk_level", "中"),
             reason=item.get("reason", ""),
             audit_procedures=item.get("audit_procedures", ""),
+        ))
+    return judgments
+
+
+def _fallback_judgments_for_hits(hits: list[Any], reason_prefix: str) -> list[LLMJudgment]:
+    judgments = []
+    for hit in hits:
+        judgments.append(LLMJudgment(
+            voucher_id=str(getattr(hit, "voucher_id", "")),
+            confirmed=True,
+            risk_level="中",
+            reason=f"{reason_prefix}，疑点保留（{str(getattr(hit, 'evidence', ''))[:60]}）",
+            audit_procedures="需人工复核",
+            source="fallback",
         ))
     return judgments

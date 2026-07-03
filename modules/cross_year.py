@@ -45,6 +45,7 @@ def _overrides_signature() -> tuple[tuple[str, str], ...]:
 # coverage_threshold / dec_multiplier 由 UI 规则卡（cross_year_accrual/revenue）暴露；
 # 其余为高级检测阈值，集中在 rules_config["cross_year_detection"]，消除全部散落硬编码。
 _DEFAULT_COVERAGE_THRESHOLD = 0.80
+_DEFAULT_MATCH_WINDOW_DAYS = 90
 _DEFAULT_DEC_MULTIPLIER = 1.8
 
 _CROSS_YEAR_DETECTION_DEFAULTS: dict[str, float] = {
@@ -74,6 +75,7 @@ def _cross_year_thresholds(cfg: dict | None) -> dict[str, float]:
     detection = cfg.get("cross_year_detection") or {}
     out = {
         "coverage_threshold": float(accrual.get("coverage_threshold", _DEFAULT_COVERAGE_THRESHOLD)),
+        "match_window_days": float(accrual.get("match_window_days", _DEFAULT_MATCH_WINDOW_DAYS)),
         "dec_multiplier": float(revenue.get("dec_multiplier", _DEFAULT_DEC_MULTIPLIER)),
     }
     for key, default in _CROSS_YEAR_DETECTION_DEFAULTS.items():
@@ -104,6 +106,7 @@ def _run_cross_year_cached(
     findings.extend(_accrual_reversal_pairs(
         year_map,
         coverage_threshold=t["coverage_threshold"],
+        match_window_days=int(t["match_window_days"]),
         min_amount=t["accrual_min_amount"],
         mismatch_tolerance=t["accrual_mismatch_tolerance"],
         high_severity_amount=t["accrual_high_severity_amount"],
@@ -153,6 +156,7 @@ def run_cross_year_analysis(
 def _accrual_reversal_pairs(
     year_map: dict[int, pd.DataFrame],
     coverage_threshold: float = _DEFAULT_COVERAGE_THRESHOLD,
+    match_window_days: int = _DEFAULT_MATCH_WINDOW_DAYS,
     min_amount: float = _CROSS_YEAR_DETECTION_DEFAULTS["accrual_min_amount"],
     mismatch_tolerance: float = _CROSS_YEAR_DETECTION_DEFAULTS["accrual_mismatch_tolerance"],
     high_severity_amount: float = _CROSS_YEAR_DETECTION_DEFAULTS["accrual_high_severity_amount"],
@@ -175,14 +179,20 @@ def _accrual_reversal_pairs(
         if dec_accruals.empty:
             continue
 
-        # 次年 Q1 冲回：1-3月，文本含"冲销"或"冲回"
-        q1_reversals = df_n1[
-            (df_n1["过账日期"].dt.month <= 3)
+        window_days = max(int(match_window_days), 1)
+        window_start = pd.Timestamp(f"{yr_n1}-01-01")
+        window_end = window_start + pd.Timedelta(days=window_days - 1)
+        window_label = f"{yr_n1}年1月1日起{window_days}天内"
+
+        # 次年指定窗口内冲回：文本含"冲销"或"冲回"
+        reversals = df_n1[
+            (df_n1["过账日期"] >= window_start)
+            & (df_n1["过账日期"] <= window_end)
             & df_n1["文本"].str.contains("冲销|冲回|红字", na=False)
         ].copy()
 
         total_accrual = dec_accruals["凭证货币价值"].abs().sum()
-        total_reversal = q1_reversals["凭证货币价值"].abs().sum() if not q1_reversals.empty else 0.0
+        total_reversal = reversals["凭证货币价值"].abs().sum() if not reversals.empty else 0.0
 
         if total_accrual < min_amount:
             continue
@@ -194,7 +204,7 @@ def _accrual_reversal_pairs(
         if coverage < coverage_threshold:
             findings.append(CrossYearFinding(
                 category="预提冲回配对",
-                description=f"{yr_n}年末预提{total_accrual:,.0f}，{yr_n1}年Q1仅冲回{total_reversal:,.0f}（{coverage:.0%}），悬空{unmatched:,.0f}",
+                description=f"{yr_n}年末预提{total_accrual:,.0f}，{window_label}仅冲回{total_reversal:,.0f}（{coverage:.0%}），悬空{unmatched:,.0f}",
                 years_involved=[yr_n, yr_n1],
                 voucher_ids=dec_accruals["凭证编号"].unique().tolist(),
                 amount=unmatched,
@@ -204,18 +214,19 @@ def _accrual_reversal_pairs(
                     "reversal_amount": round(total_reversal, 2),
                     "coverage_ratio": round(coverage, 4),
                     "threshold_used": coverage_threshold,  # 审计留痕：实际生效阈值
+                    "match_window_days": window_days,
                 },
             ))
         # 金额不等的冲回（调节利润）
         elif abs(coverage - 1.0) > mismatch_tolerance:
             findings.append(CrossYearFinding(
                 category="预提冲回金额不符",
-                description=f"{yr_n}年末预提与{yr_n1}年Q1冲回金额差异{abs(coverage-1):.0%}，疑似调节跨年损益",
+                description=f"{yr_n}年末预提与{window_label}冲回金额差异{abs(coverage-1):.0%}，疑似调节跨年损益",
                 years_involved=[yr_n, yr_n1],
                 voucher_ids=dec_accruals["凭证编号"].unique().tolist(),
                 amount=abs(total_accrual - total_reversal),
                 severity="中",
-                evidence={"coverage_ratio": round(coverage, 4)},
+                evidence={"coverage_ratio": round(coverage, 4), "match_window_days": window_days},
             ))
 
     return findings
@@ -494,7 +505,7 @@ def _account_relationship_drift(
 
     def _get_acct_pairs(df: pd.DataFrame) -> set[tuple[str, str]]:
         pairs = set()
-        for vid, grp in df.groupby("凭证编号"):
+        for _vid, grp in df.groupby("凭证编号"):
             accounts = grp["总账科目"].astype(str).str[:4].unique().tolist()
             accounts.sort()
             for i in range(len(accounts)):

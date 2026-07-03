@@ -8,9 +8,9 @@ from __future__ import annotations
 import streamlit as st
 
 from modules import knowledge_base as kb
-from modules import llm_config
-from modules.runtime_context import storage_namespace_label
+from modules import llm_client, llm_config
 from modules.llm_quota import quota_status
+from modules.runtime_context import storage_namespace_label
 
 
 def render_sidebar(
@@ -137,11 +137,11 @@ def render_sidebar(
             name_conflict = _project_name_exists(new_project_name_clean) if new_project_name_clean else False
             if name_conflict:
                 st.warning("已有同名项目")
-            
+
             discard_confirmed = True
             if has_current_work:
                 discard_confirmed = st.checkbox("确认切换到空白项目", key="confirm_new_blank_project")
-            
+
             create_disabled = not new_project_name_clean or name_conflict or (has_current_work and not discard_confirmed)
             if st.button("创建项目", disabled=create_disabled, width="stretch"):
                 try:
@@ -251,6 +251,29 @@ def render_sidebar(
                 key="llm_remember_key",
                 help="存入本机钥匙串/加密文件，仅本机可读；绝不写入项目缓存或方案文件。取消勾选并保存可清除。",
             )
+
+            # ── 连通性测试：分析前一键确认 Key/URL/模型可用 ──
+            if st.button("测试连接", key="llm_test_connection", width="stretch"):
+                api_key, key_source = _resolve_api_key()
+                with st.spinner("正在测试 LLM 连接…"):
+                    ok, message = llm_client.ping(
+                        api_key,
+                        model=_llm_model(),
+                        base_url=_llm_base_url(),
+                    )
+                st.session_state["_llm_test_result"] = {
+                    "ok": ok,
+                    "message": message,
+                    "source": key_source if ok else "",
+                }
+
+            test_result = st.session_state.get("_llm_test_result")
+            if test_result:
+                if test_result["ok"]:
+                    suffix = f"（密钥来源：{test_result['source']}）" if test_result.get("source") else ""
+                    st.success(f"✅ {test_result['message']}{suffix}")
+                else:
+                    st.error(f"❌ {test_result['message']}")
 
             # ── 单一保存动作：方案 + 密钥一起落地 ──
             if st.button("保存方案", type="primary", width="stretch"):

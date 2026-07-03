@@ -29,13 +29,15 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
 import streamlit as st
 
+from components.candidate_actions import detail_metrics
 from modules import audit_llm_analysis as ala
 from modules import candidate_pool as cp
 from modules.audit_llm_analysis import (
@@ -68,8 +70,6 @@ from modules.visual_analysis import (
     build_supplier_payable_entry_top10_from_work,
     build_supplier_top10_from_work,
 )
-
-from components.candidate_actions import detail_metrics
 
 
 def unified_llm_key(years: list[int], category: str) -> str:
@@ -467,7 +467,7 @@ def detail_for_recommendation(
             "冲回": ["冲回", "冲销", "reversal"],
         }
         keywords = []
-        for kw_group, kws in keyword_map.items():
+        for _kw_group, kws in keyword_map.items():
             if any(k in cat_lower for k in kws):
                 keywords.extend(kws)
         if not keywords:
@@ -961,7 +961,7 @@ def render_candidate_recommendations_for_module(
 
     if not cards_only:
         return
-    recommendations = list(((unified_cached.get("module_recommendations") or {}).get(module_filter, [])))
+    recommendations = list((unified_cached.get("module_recommendations") or {}).get(module_filter, []))
     filtered_recommendations = [
         rec for rec in recommendations
         if isinstance(rec, dict) and recommendation_matches_module(rec, module_filter)
